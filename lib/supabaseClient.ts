@@ -3,30 +3,21 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * IMPORTANT:
- * Next.js will evaluate modules during build/SSR even for "use client" pages.
- * Creating the Supabase browser client at module scope will therefore fail the build
- * if NEXT_PUBLIC_SUPABASE_* env vars are not available at build time, and is also not
- * correct to run on the server.
- *
- * This file provides a lazy browser-only client while keeping existing imports working.
+ * In Next.js client bundles, NEXT_PUBLIC_* env vars must be referenced statically.
+ * Accessing env vars as process.env[name] will NOT be inlined and will be undefined at runtime.
  */
 
 let _browserClient: SupabaseClient | null = null;
 
-function getEnv(name: string) {
-  return process.env[name];
-}
-
 function resolveSupabaseConfig() {
-  // Support both conventional Next.js public env var names and Supabase-style names.
+  // These MUST be static references for Next.js to inline them into the client bundle.
   const url =
-    getEnv("NEXT_PUBLIC_SUPABASE_URL") ||
-    getEnv("SUPABASE_URL") ||
-    getEnv("SUPABASE_PROJECT_URL");
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_PROJECT_URL; // optional fallback if you ever use it
+
   const anon =
-    getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY") ||
-    getEnv("SUPABASE_ANON_KEY") ||
-    getEnv("SUPABASE_PUBLIC_ANON_KEY");
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLIC_ANON_KEY; // optional fallback if you ever use it
 
   return { url, anon };
 }
@@ -42,7 +33,7 @@ export function createSupabaseBrowserClient(): SupabaseClient {
 
   if (!url || !anon) {
     throw new Error(
-      "Missing Supabase env vars. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
+      "Missing Supabase env vars. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel (Production) and redeploy."
     );
   }
 
@@ -52,7 +43,7 @@ export function createSupabaseBrowserClient(): SupabaseClient {
 
 /**
  * Backwards-compatible singleton export.
- * This is a proxy that lazily creates the client on first use in the browser.
+ * Proxy lazily creates the client on first use in the browser.
  */
 export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
   get(_target, prop) {
