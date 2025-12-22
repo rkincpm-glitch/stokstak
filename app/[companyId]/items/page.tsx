@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect, useState} from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
@@ -29,7 +29,6 @@ export default function ItemsPage() {
   const [q, setQ] = useState("");
 
   useEffect(() => {
-    const supabase = createSupabaseBrowserClient();
     if (companyLoading) return;
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -38,6 +37,8 @@ export default function ItemsPage() {
   const load = async () => {
     setLoading(true);
     setError(null);
+
+    const supabase = createSupabaseBrowserClient();
 
     const { data: userData } = await supabase.auth.getUser();
     if (!userData?.user) {
