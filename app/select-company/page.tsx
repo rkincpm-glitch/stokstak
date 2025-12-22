@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect, useState} from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 
@@ -9,7 +9,7 @@ type Company = {
   name: string;
 };
 
-// PostgREST can return nested relations as an array (common) or as an object (depending on relationship).
+// PostgREST can return nested relations as an array (common) or as an object (depends on relationship).
 type CompanyRelation = Company[] | Company | null;
 
 type MembershipRowFromDb = {
@@ -24,8 +24,7 @@ type Membership = {
 
 function normalizeCompany(rel: CompanyRelation): Company | null {
   if (!rel) return null;
-  if (Array.isArray(rel)) return rel[0] ?? null;
-  return rel;
+  return Array.isArray(rel) ? rel[0] ?? null : rel;
 }
 
 function setActiveCompanyCookie(companyId: string) {
@@ -37,24 +36,27 @@ function setActiveCompanyCookie(companyId: string) {
 
 export default function SelectCompanyPage() {
   const router = useRouter();
+
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [memberships, setMemberships] = useState<Membership[]>([]);
 
   useEffect(() => {
-    const supabase = createSupabaseBrowserClient();
     let cancelled = false;
 
     const run = async () => {
       setLoading(true);
       setErr(null);
 
+      const supabase = createSupabaseBrowserClient();
+
       const { data: authData, error: authErr } = await supabase.auth.getUser();
+      if (cancelled) return;
+
       if (authErr) {
-        if (!cancelled) {
-          setErr(authErr.message);
-          setLoading(false);
-        }
+        setErr(authErr.message);
+        setMemberships([]);
+        setLoading(false);
         return;
       }
 
@@ -69,12 +71,12 @@ export default function SelectCompanyPage() {
         .select("company_id, companies(id, name)")
         .eq("user_id", user.id);
 
+      if (cancelled) return;
+
       if (error) {
-        if (!cancelled) {
-          setErr(error.message);
-          setMemberships([]);
-          setLoading(false);
-        }
+        setErr(error.message);
+        setMemberships([]);
+        setLoading(false);
         return;
       }
 
@@ -89,33 +91,28 @@ export default function SelectCompanyPage() {
 
       // If exactly one company, jump straight in
       if (normalized.length === 1) {
-        // Persist selection for server-side routing/middleware
         setActiveCompanyCookie(normalized[0].company_id);
         router.replace(`/${normalized[0].company_id}`);
         return;
       }
 
-      if (!cancelled) {
-        setMemberships(normalized);
-        setLoading(false);
-      }
+      setMemberships(normalized);
+      setLoading(false);
     };
 
-    run();
+    void run();
 
     return () => {
       cancelled = true;
     };
-  }, [router, supabase]);
+  }, [router]);
 
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
 
   return (
     <div style={{ maxWidth: 980, margin: "40px auto", padding: 16 }}>
       <h1 style={{ fontSize: 22, fontWeight: 700 }}>Select Company</h1>
-      <p style={{ opacity: 0.7, marginTop: 8 }}>
-        Choose the workspace you want to access.
-      </p>
+      <p style={{ opacity: 0.7, marginTop: 8 }}>Choose the workspace you want to access.</p>
 
       {err && (
         <div
@@ -133,9 +130,7 @@ export default function SelectCompanyPage() {
       )}
 
       {memberships.length === 0 ? (
-        <div style={{ marginTop: 16, opacity: 0.8 }}>
-          No companies found for your user.
-        </div>
+        <div style={{ marginTop: 16, opacity: 0.8 }}>No companies found for your user.</div>
       ) : (
         <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
           {memberships.map((m) => (
@@ -154,9 +149,7 @@ export default function SelectCompanyPage() {
                 background: "white",
               }}
             >
-              <div style={{ fontWeight: 700 }}>
-                {m.company?.name ?? "Company"}
-              </div>
+              <div style={{ fontWeight: 700 }}>{m.company?.name ?? "Company"}</div>
               <div style={{ opacity: 0.7, fontSize: 13 }}>{m.company_id}</div>
             </button>
           ))}
