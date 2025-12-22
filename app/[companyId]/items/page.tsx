@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {useEffect, useState} from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
@@ -21,7 +21,6 @@ type Item = {
 
 export default function ItemsPage() {
   const router = useRouter();
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const { loading: companyLoading, companyId } = useCompany();
 
   const [loading, setLoading] = useState(true);
@@ -30,6 +29,7 @@ export default function ItemsPage() {
   const [q, setQ] = useState("");
 
   useEffect(() => {
+    const supabase = createSupabaseBrowserClient();
     if (companyLoading) return;
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps

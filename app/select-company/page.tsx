@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {useEffect, useState} from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 
@@ -37,13 +37,12 @@ function setActiveCompanyCookie(companyId: string) {
 
 export default function SelectCompanyPage() {
   const router = useRouter();
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [memberships, setMemberships] = useState<Membership[]>([]);
 
   useEffect(() => {
+    const supabase = createSupabaseBrowserClient();
     let cancelled = false;
 
     const run = async () => {
