@@ -1,11 +1,12 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 export default function CreateCompanyPage() {
   const router = useRouter();
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
@@ -13,7 +14,6 @@ export default function CreateCompanyPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    const supabase = createSupabaseBrowserClient();
     setErr(null);
 
     const trimmed = name.trim();

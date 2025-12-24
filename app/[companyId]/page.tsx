@@ -1,561 +1,256 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  ArrowLeft,
-  ClipboardList,
-  Calendar,
-  Plus,
-  AlertCircle,
-  Clock3,
-  History,
-} from "lucide-react";
-import { useCompany } from "@/lib/useCompany";
+import { useParams, useRouter } from "next/navigation";
+import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { LayoutGrid, List, Plus, Search } from "lucide-react";
 
-type Project = {
+type Item = {
   id: string;
   name: string;
-  code: string | null;
-  company_id?: string | null;
+  description: string | null;
+  category: string | null;
+  location: string | null;
+  quantity: number | null;
+  te_number: string | null;
+  type: string | null;
+  image_url: string | null;
+  created_at: string | null;
 };
 
-type PurchaseRequest = {
-  id: string;
-  project_id: string | null;
-  requested_by: string | null;
-  status: string;
-  needed_by: string | null;
-  created_at: string;
-  notes: string | null;
-  pm_approved_by: string | null;
-  president_approved_by: string | null;
-  purchased_by: string | null;
-  received_by: string | null;
-  pur_number?: string | null;
-  company_id?: string | null;
-};
+type ViewMode = "list" | "tiles";
 
-type RequestWithProject = PurchaseRequest & {
-  project_name: string | null;
-  project_code: string | null;
-};
-
-type Profile = {
-  id: string;
-  role: string;
-  display_name: string | null;
-};
-
-type Todo = {
-  id: string;
-  title: string;
-  status: "open" | "done";
-  due_date: string | null;
-  created_at: string;
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  submitted: "Submitted",
-  pm_approved: "PM Approved",
-  president_approved: "President Approved",
-  purchased: "Purchased",
-  received: "Received",
-  rejected: "Rejected",
-};
-
-const STATUS_COLOR: Record<string, string> = {
-  submitted: "bg-blue-100 text-blue-700",
-  pm_approved: "bg-indigo-100 text-indigo-700",
-  president_approved: "bg-purple-100 text-purple-700",
-  purchased: "bg-emerald-100 text-emerald-700",
-  received: "bg-green-100 text-green-700",
-  rejected: "bg-red-100 text-red-700",
-};
-
-export default function PurchaseRequestsPage() {
+export default function CompanyHomePage() {
   const router = useRouter();
-  const { loading: companyLoading, companyId } = useCompany();
+  const params = useParams<{ companyId: string }>();
+  const companyId = params.companyId;
 
   const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState<Profile | null>(null);
-
-  const [myRequests, setMyRequests] = useState<RequestWithProject[]>([]);
-  const [pendingApprovals, setPendingApprovals] = useState<RequestWithProject[]>([]);
-  const [historyRequests, setHistoryRequests] = useState<RequestWithProject[]>([]);
-
-  const [todos, setTodos] = useState<Todo[]>([]);
-  const [newTodoTitle, setNewTodoTitle] = useState("");
-
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [items, setItems] = useState<Item[]>([]);
+  const [q, setQ] = useState("");
+  const [view, setView] = useState<ViewMode>("list");
 
   useEffect(() => {
-    if (companyLoading) return;
-    void loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyLoading, companyId]);
+    const run = async () => {
+      setLoading(true);
+      setErr(null);
 
-  const loadData = async () => {
-    setLoading(true);
-    setErrorMsg(null);
+      const supabase = createSupabaseBrowserClient();
 
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData?.user) {
-      router.push("/auth");
-      return;
-    }
-    const userId = userData.user.id;
-    const email = userData.user.email || "";
-
-    if (!companyId) {
-      setProfile(null);
-      setMyRequests([]);
-      setPendingApprovals([]);
-      setHistoryRequests([]);
-      setLoading(false);
-      return;
-    }
-
-    // 1) Profile / role
-    let role = "requester";
-    let displayName: string | null = null;
-
-    const { data: profData, error: profError } = await supabase
-      .from("profiles")
-      .select("id, role, display_name")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (!profError && profData) {
-      role = profData.role || "requester";
-      displayName = profData.display_name || null;
-    } else if (!profData) {
-      await supabase.from("profiles").insert({
-        id: userId,
-        role: "requester",
-        display_name: email,
-      });
-    }
-
-    const myProfile: Profile = { id: userId, role, display_name: displayName };
-    setProfile(myProfile);
-
-    // 2) Load projects (company scoped)
-    const { data: projData, error: projError } = await supabase
-      .from("projects")
-      .select("id, name, code, company_id")
-      .eq("company_id", companyId);
-
-    if (projError) {
-      console.error(projError);
-      setErrorMsg("Error loading projects.");
-      setLoading(false);
-      return;
-    }
-
-    const projectMap = new Map<string, Project>();
-    (projData || []).forEach((p) => projectMap.set(p.id, p as Project));
-
-    // Helper to map requests -> include project name/code
-    const attachProject = (r: any): RequestWithProject => {
-      const proj = r.project_id ? projectMap.get(r.project_id) : undefined;
-      return {
-        ...(r as PurchaseRequest),
-        project_name: proj?.name || null,
-        project_code: proj?.code || null,
-      };
-    };
-
-    // 3) My requests (company scoped)
-    const { data: myReqData, error: myReqError } = await supabase
-      .from("purchase_requests")
-      .select(
-        "id, company_id, project_id, requested_by, status, needed_by, created_at, notes, pm_approved_by, president_approved_by, purchased_by, received_by, pur_number"
-      )
-      .eq("company_id", companyId)
-      .eq("requested_by", userId)
-      .order("created_at", { ascending: false });
-
-    if (myReqError) {
-      console.error(myReqError);
-      setErrorMsg(`Error loading your requests: ${myReqError.message}`);
-      setLoading(false);
-      return;
-    }
-
-    setMyRequests((myReqData || []).map(attachProject));
-
-    // 3.5) Load my to-dos (company scoped)
-    // Personal list: tasks created by the current user (simple + reliable with current schema).
-    const { data: todoData, error: todoError } = await supabase
-      .from("todos")
-      .select("id, title, status, due_date, created_at")
-      .eq("company_id", companyId)
-      .eq("created_by", userId)
-      .order("created_at", { ascending: false })
-      .limit(10);
-
-    if (todoError) {
-      console.error(todoError);
-      setTodos([]);
-    } else {
-      setTodos((todoData || []) as Todo[]);
-    }
-
-    // 4) Pending approvals for my role (company scoped)
-    let statusFilter: string[] = [];
-
-    if (role === "pm") statusFilter = ["submitted"];
-    else if (role === "president") statusFilter = ["pm_approved"];
-    else if (role === "purchaser") statusFilter = ["president_approved"];
-    else if (role === "admin") statusFilter = ["submitted", "pm_approved", "president_approved"];
-    else statusFilter = [];
-
-    if (statusFilter.length > 0) {
-      const { data: pendingData, error: pendingError } = await supabase
-        .from("purchase_requests")
-        .select(
-          "id, company_id, project_id, requested_by, status, needed_by, created_at, notes, pm_approved_by, president_approved_by, purchased_by, received_by, pur_number"
-        )
-        .eq("company_id", companyId)
-        .in("status", statusFilter)
-        .order("created_at", { ascending: true });
-
-      if (pendingError) {
-        console.error(pendingError);
-        setErrorMsg(`Error loading approvals: ${pendingError.message}`);
-        setLoading(false);
+      const { data: userData } = await supabase.auth.getUser();
+      if (!userData?.user) {
+        router.replace("/auth");
         return;
       }
 
-      setPendingApprovals((pendingData || []).map(attachProject));
-    } else {
-      setPendingApprovals([]);
+      const { data, error } = await supabase
+        .from("items")
+        .select("id, name, description, category, location, quantity, te_number, type, image_url, created_at")
+        .eq("company_id", companyId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        setErr(error.message);
+        setItems([]);
+      } else {
+        setItems((data || []) as Item[]);
+      }
+
+      setLoading(false);
+    };
+
+    void run();
+  }, [companyId, router]);
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return items;
+    return items.filter((i) => {
+      const hay = `${i.name} ${i.te_number ?? ""} ${i.category ?? ""} ${i.location ?? ""} ${i.type ?? ""}`.toLowerCase();
+      return hay.includes(s);
+    });
+  }, [items, q]);
+
+  const grouped = useMemo(() => {
+    const m = new Map<string, Item[]>();
+    for (const it of filtered) {
+      const key = (it.category || "Uncategorized").trim() || "Uncategorized";
+      const arr = m.get(key) || [];
+      arr.push(it);
+      m.set(key, arr);
     }
+    return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [filtered]);
 
-    // 5) History (company scoped)
-    const { data: historyData, error: historyError } = await supabase
-      .from("purchase_requests")
-      .select(
-        "id, company_id, project_id, requested_by, status, needed_by, created_at, notes, pm_approved_by, president_approved_by, purchased_by, received_by, pur_number"
-      )
-      .eq("company_id", companyId)
-      .or(
-        `requested_by.eq.${userId},pm_approved_by.eq.${userId},president_approved_by.eq.${userId},purchased_by.eq.${userId},received_by.eq.${userId}`
-      )
-      .order("created_at", { ascending: false });
-
-    if (historyError) {
-      console.error(historyError);
-      setHistoryRequests([]);
-    } else {
-      setHistoryRequests((historyData || []).map(attachProject));
-    }
-
-    setLoading(false);
-  };
-
-  const addTodo = async () => {
-    if (!companyId) return;
-    const title = newTodoTitle.trim();
-    if (!title) return;
-
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData?.user?.id;
-
-    const { data, error } = await supabase
-      .from("todos")
-      .insert({
-        company_id: companyId,
-        title,
-        status: "open",
-        created_by: userId,
-      })
-      .select("id, title, status, due_date, created_at")
-      .single();
-
-    if (error) {
-      setErrorMsg(`Could not create to-do: ${error.message}`);
-      return;
-    }
-
-    setNewTodoTitle("");
-    setTodos((prev) => [data as Todo, ...prev].slice(0, 10));
-  };
-
-  const toggleTodo = async (todo: Todo) => {
-    const nextStatus = todo.status === "done" ? "open" : "done";
-    const { error } = await supabase
-      .from("todos")
-      .update({ status: nextStatus })
-      .eq("id", todo.id);
-    if (error) {
-      setErrorMsg(`Could not update to-do: ${error.message}`);
-      return;
-    }
-    setTodos((prev) => prev.map((t) => (t.id === todo.id ? { ...t, status: nextStatus } : t)));
-  };
-
-  const renderTable = (list: RequestWithProject[]) => {
-    if (list.length === 0) {
-      return (
-        <div className="bg-white rounded-xl border shadow-sm p-4 text-sm text-slate-500">
-          Nothing here.
-        </div>
-      );
-    }
-
-    return (
-      <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b">
-              <tr className="text-left text-xs text-slate-500">
-                <th className="px-4 py-2">Project</th>
-                <th className="px-4 py-2">Request</th>
-                <th className="px-4 py-2">Status</th>
-                <th className="px-4 py-2">Needed By</th>
-                <th className="px-4 py-2">Created</th>
-                <th className="px-4 py-2 text-right">Open</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((r) => {
-                const statusClass = STATUS_COLOR[r.status] || "bg-slate-100 text-slate-700";
-                const label = STATUS_LABEL[r.status] || r.status;
-                const shortId = r.id.slice(0, 8);
-                const numberLabel = r.pur_number || `PUR-${shortId}`;
-
-                return (
-                  <tr key={r.id} className="border-b last:border-0 hover:bg-slate-50">
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col">
-                        <span className="font-medium text-slate-900">
-                          {r.project_name || "No project"}
-                        </span>
-                        {r.project_code && (
-                          <span className="text-xs text-slate-500">{r.project_code}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col">
-                        <span className="text-sm font-medium text-slate-800">
-                          {numberLabel}
-                        </span>
-                        <span className="text-[11px] text-slate-400">ID: {shortId}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${statusClass}`}>
-                        {label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-600">
-                      {r.needed_by ? (
-                        <span className="inline-flex items-center gap-1">
-                          <Calendar className="w-3 h-3" />
-                          {r.needed_by}
-                        </span>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-600">
-                      {r.created_at.slice(0, 10)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-xs">
-                      <Link
-                        href={`/${companyId}/purchase-requests/${r.id}`}
-                        className="text-emerald-700 hover:text-emerald-900"
-                      >
-                        View →
-                      </Link>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
-  if (loading || companyLoading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500">
-        Loading purchase requests...
-      </div>
-    );
-  }
-
-  if (!companyId) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
-        <div className="bg-white border rounded-xl p-4 text-sm text-slate-700 max-w-md w-full">
-          No company assigned to this user. Please add this user to a company in{" "}
-          <code>company_users</code>.
-          <div className="mt-3">
-            <Link href="/select-company" className="text-blue-600 hover:underline">
-              Back to company selection
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!profile) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-red-600">
-        Unable to load profile.
-      </div>
-    );
+  if (loading) {
+    return <div className="text-slate-500">Loading dashboard…</div>;
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-white border-b border-slate-200">
-        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
-          <Link
-            href="/select-company"
-            className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Stokstak
-          </Link>
-
-          <div className="flex items-center gap-3">
-            <nav className="hidden sm:flex items-center gap-2 text-sm">
-              <Link href={`/${companyId}/items`} className="px-3 py-2 rounded-lg hover:bg-slate-100 text-slate-700">
-                Inventory
-              </Link>
-              <Link href={`/${companyId}/reports`} className="px-3 py-2 rounded-lg hover:bg-slate-100 text-slate-700">
-                Reports
-              </Link>
-              <Link href={`/${companyId}/settings`} className="px-3 py-2 rounded-lg hover:bg-slate-100 text-slate-700">
-                Settings
-              </Link>
-            </nav>
-            <div className="bg-emerald-600 p-2 rounded-lg">
-              <ClipboardList className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-900">Purchase Requests</p>
-              <p className="text-xs text-slate-500">Role: {profile.role}</p>
-            </div>
+    <div className="space-y-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-900">Inventory Overview</h1>
+          <div className="text-sm text-slate-500 mt-1">
+            {filtered.length} item(s) across {grouped.length} categories
           </div>
         </div>
-      </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-        <section className="bg-white rounded-xl border shadow-sm p-4">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-900">My To-Do List</h2>
-              <p className="text-xs text-slate-500">Quick actions for today (company scoped)</p>
-            </div>
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <input
-                value={newTodoTitle}
-                onChange={(e) => setNewTodoTitle(e.target.value)}
-                placeholder="Add a to-do..."
-                className="w-full sm:w-80 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-              />
-              <button
-                onClick={addTodo}
-                className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-
-          {todos.length === 0 ? (
-            <div className="mt-3 text-sm text-slate-500">No to-dos yet.</div>
-          ) : (
-            <ul className="mt-3 divide-y">
-              {todos.map((t) => (
-                <li key={t.id} className="py-2 flex items-center justify-between gap-3">
-                  <button
-                    onClick={() => toggleTodo(t)}
-                    className="text-left flex-1"
-                  >
-                    <div className={`text-sm ${t.status === "done" ? "line-through text-slate-400" : "text-slate-800"}`}>
-                      {t.title}
-                    </div>
-                    {t.due_date && (
-                      <div className="text-xs text-slate-500">Due: {t.due_date}</div>
-                    )}
-                  </button>
-                  <span className={`text-xs px-2 py-1 rounded-full ${t.status === "done" ? "bg-slate-100 text-slate-600" : "bg-amber-100 text-amber-800"}`}>
-                    {t.status === "done" ? "Done" : "Open"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <p className="text-sm text-slate-600">{myRequests.length} request(s) created by you</p>
+        <div className="flex items-center gap-2">
           <Link
-            href={`/${companyId}/purchase-requests/new`}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
+            href={`/${companyId}/add-item`}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
           >
-            <Plus className="w-4 h-4" />
-            New Purchase Request
+            <Plus className="h-4 w-4" />
+            Add Item
           </Link>
-        </div>
 
-        {errorMsg && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4" />
-            <span>{errorMsg}</span>
+          <div className="flex rounded-lg border bg-white overflow-hidden">
+            <button
+              onClick={() => setView("list")}
+              className={[
+                "px-3 py-2 text-sm flex items-center gap-2",
+                view === "list" ? "bg-slate-100 text-slate-900" : "text-slate-600 hover:bg-slate-50",
+              ].join(" ")}
+              aria-label="List view"
+              type="button"
+            >
+              <List className="h-4 w-4" />
+              List
+            </button>
+            <button
+              onClick={() => setView("tiles")}
+              className={[
+                "px-3 py-2 text-sm flex items-center gap-2 border-l",
+                view === "tiles" ? "bg-slate-100 text-slate-900" : "text-slate-600 hover:bg-slate-50",
+              ].join(" ")}
+              aria-label="Tiles view"
+              type="button"
+            >
+              <LayoutGrid className="h-4 w-4" />
+              Tiles
+            </button>
           </div>
-        )}
+        </div>
+      </div>
 
-        {(profile.role !== "requester" || pendingApprovals.length > 0) && (
-          <section className="space-y-2">
-            <div className="flex items-center gap-2 text-slate-800">
-              <Clock3 className="w-4 h-4 text-amber-500" />
-              <h2 className="text-sm font-semibold uppercase tracking-wide">Needs My Attention</h2>
-            </div>
-            {pendingApprovals.length === 0 ? (
-              <div className="bg-white rounded-xl border shadow-sm p-4 text-sm text-slate-500">
-                No requests are currently waiting for your approval.
+      <div className="bg-white rounded-xl border shadow-sm p-4">
+        <div className="flex items-center gap-2">
+          <Search className="h-4 w-4 text-slate-400" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search by name, TE#, category, location, type"
+            className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+          />
+        </div>
+        {err && <div className="mt-3 text-sm text-red-600">{err}</div>}
+      </div>
+
+      {grouped.length === 0 ? (
+        <div className="bg-white rounded-xl border shadow-sm p-6 text-sm text-slate-500">
+          No inventory found for this company.
+          <div className="mt-3">
+            <Link className="text-emerald-700 hover:underline" href={`/${companyId}/add-item`}>
+              Add your first item
+            </Link>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {grouped.map(([category, list]) => (
+            <section key={category} className="bg-white rounded-xl border shadow-sm overflow-hidden">
+              <div className="px-4 py-3 bg-slate-50 border-b flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">{category}</div>
+                  <div className="text-xs text-slate-500">{list.length} item(s)</div>
+                </div>
+                <Link href={`/${companyId}/items`} className="text-xs text-slate-600 hover:text-slate-900">
+                  View stock module →
+                </Link>
               </div>
-            ) : (
-              renderTable(pendingApprovals)
-            )}
-          </section>
-        )}
 
-        <section className="space-y-2">
-          <div className="flex items-center gap-2 text-slate-800">
-            <ClipboardList className="w-4 h-4 text-sky-500" />
-            <h2 className="text-sm font-semibold uppercase tracking-wide">My Requests</h2>
-          </div>
-          {renderTable(myRequests)}
-        </section>
-
-        <section className="space-y-2">
-          <div className="flex items-center gap-2 text-slate-800">
-            <History className="w-4 h-4 text-slate-500" />
-            <h2 className="text-sm font-semibold uppercase tracking-wide">My History</h2>
-          </div>
-          {historyRequests.length === 0 ? (
-            <div className="bg-white rounded-xl border shadow-sm p-4 text-sm text-slate-500">
-              You have no completed or past purchase requests yet.
-            </div>
-          ) : (
-            renderTable(historyRequests)
-          )}
-        </section>
-      </main>
+              {view === "list" ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-white border-b">
+                      <tr className="text-left text-xs text-slate-500">
+                        <th className="px-4 py-2">Item</th>
+                        <th className="px-4 py-2">TE #</th>
+                        <th className="px-4 py-2">Type</th>
+                        <th className="px-4 py-2">Location</th>
+                        <th className="px-4 py-2 text-right">Qty</th>
+                        <th className="px-4 py-2 text-right">Edit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {list.map((it) => (
+                        <tr key={it.id} className="border-t">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              <div className="h-10 w-10 rounded-lg border bg-slate-50 overflow-hidden flex items-center justify-center shrink-0">
+                                {it.image_url ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={it.image_url} alt={it.name} className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="text-[10px] text-slate-400">No photo</div>
+                                )}
+                              </div>
+                              <div>
+                                <div className="font-medium text-slate-900">{it.name}</div>
+                                {it.description && <div className="text-xs text-slate-500">{it.description}</div>}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">{it.te_number || "-"}</td>
+                          <td className="px-4 py-3 text-slate-700">{it.type || "-"}</td>
+                          <td className="px-4 py-3 text-slate-700">{it.location || "-"}</td>
+                          <td className="px-4 py-3 text-right">{it.quantity ?? 0}</td>
+                          <td className="px-4 py-3 text-right">
+                            <Link href={`/${companyId}/edit-item/${it.id}`} className="text-emerald-700 hover:text-emerald-900">
+                              Edit →
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {list.map((it) => (
+                    <Link
+                      key={it.id}
+                      href={`/${companyId}/edit-item/${it.id}`}
+                      className="group rounded-xl border bg-white hover:shadow-md transition-shadow overflow-hidden"
+                    >
+                      <div className="h-36 bg-slate-50 border-b overflow-hidden flex items-center justify-center">
+                        {it.image_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={it.image_url} alt={it.name} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="text-xs text-slate-400">No photo</div>
+                        )}
+                      </div>
+                      <div className="p-3">
+                        <div className="font-semibold text-slate-900 group-hover:text-emerald-700">{it.name}</div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          TE: {it.te_number || "-"} • Qty: {it.quantity ?? 0}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          {it.type || "—"} • {it.location || "—"}
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

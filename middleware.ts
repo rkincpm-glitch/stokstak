@@ -52,31 +52,6 @@ export async function middleware(req: NextRequest) {
   const segments = pathname.split("/").filter(Boolean);
   const companyId = segments[0];
 
-  // Routes that are currently defined outside /[companyId]/...
-  // We support them by rewriting to /<activeCompanyId>/<route> when possible.
-  const topLevelCompanyScopedRoutes = [
-    "purchase-requests",
-    "items",
-    "add-item",
-    "reports",
-    "settings",
-    "admin",
-    "edit-item",
-  ];
-
-  if (topLevelCompanyScopedRoutes.includes(companyId)) {
-    const activeCompanyId = req.cookies.get("stokstak_company_id")?.value;
-    if (!activeCompanyId || activeCompanyId.length < 30) {
-      const redirectUrl = req.nextUrl.clone();
-      redirectUrl.pathname = "/select-company";
-      return NextResponse.redirect(redirectUrl);
-    }
-
-    const rewriteUrl = req.nextUrl.clone();
-    rewriteUrl.pathname = `/${activeCompanyId}${pathname}`;
-    return NextResponse.rewrite(rewriteUrl);
-  }
-
   // Routes that are allowed without a companyId
   const allowedNoCompany = ["select-company", "onboarding"];
   if (allowedNoCompany.includes(companyId)) return res;
