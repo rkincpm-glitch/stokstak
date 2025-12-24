@@ -2,10 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
-import { useCompany } from "@/lib/useCompany";
-import { Plus, Search } from "lucide-react";
+import { X, Plus, Search, SlidersHorizontal } from "lucide-react";
 
 type Item = {
   id: string;
@@ -20,54 +19,139 @@ type Item = {
   created_at: string | null;
 };
 
+function ItemModal({
+  companyId,
+  item,
+  onClose,
+}: {
+  companyId: string;
+  item: Item;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="absolute inset-0 flex items-center justify-center p-4">
+        <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl border overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b bg-slate-50">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">{item.name}</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                TE: {item.te_number || "-"} • Qty: {item.quantity ?? 0}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="p-2 rounded-lg hover:bg-slate-100"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="rounded-xl border bg-slate-50 overflow-hidden flex items-center justify-center min-h-[220px]">
+              {item.image_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={item.image_url} alt={item.name} className="h-full w-full object-cover" />
+              ) : (
+                <div className="text-sm text-slate-400">No image</div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="p-3 rounded-xl border bg-white">
+                  <div className="text-xs text-slate-500">Category</div>
+                  <div className="font-medium text-slate-900 mt-1">{item.category || "Uncategorized"}</div>
+                </div>
+                <div className="p-3 rounded-xl border bg-white">
+                  <div className="text-xs text-slate-500">Type</div>
+                  <div className="font-medium text-slate-900 mt-1">{item.type || "—"}</div>
+                </div>
+                <div className="p-3 rounded-xl border bg-white">
+                  <div className="text-xs text-slate-500">Location</div>
+                  <div className="font-medium text-slate-900 mt-1">{item.location || "—"}</div>
+                </div>
+                <div className="p-3 rounded-xl border bg-white">
+                  <div className="text-xs text-slate-500">Quantity</div>
+                  <div className="font-medium text-slate-900 mt-1">{item.quantity ?? 0}</div>
+                </div>
+              </div>
+
+              {item.description ? (
+                <div className="p-3 rounded-xl border bg-white">
+                  <div className="text-xs text-slate-500">Description</div>
+                  <div className="text-sm text-slate-900 mt-1 whitespace-pre-wrap">{item.description}</div>
+                </div>
+              ) : null}
+
+              <div className="flex items-center gap-2 pt-1">
+                <Link
+                  href={`/${companyId}/edit-item/${item.id}`}
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
+                >
+                  Edit Item
+                </Link>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg border bg-white text-sm font-medium hover:bg-slate-50"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ItemsPage() {
   const router = useRouter();
-  const { loading: companyLoading, companyId } = useCompany();
+  const params = useParams<{ companyId: string }>();
+  const companyId = params.companyId;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [q, setQ] = useState("");
+  const [selected, setSelected] = useState<Item | null>(null);
 
   useEffect(() => {
-    if (companyLoading) return;
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyLoading, companyId]);
+    const load = async () => {
+      setLoading(true);
+      setError(null);
 
-  const load = async () => {
-    setLoading(true);
-    setError(null);
+      const supabase = createSupabaseBrowserClient();
 
-    const supabase = createSupabaseBrowserClient();
+      const { data: userData } = await supabase.auth.getUser();
+      if (!userData?.user) {
+        router.replace("/auth");
+        return;
+      }
 
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData?.user) {
-      router.replace("/auth");
-      return;
-    }
+      const { data, error } = await supabase
+        .from("items")
+        .select("id, name, description, category, location, quantity, te_number, type, image_url, created_at")
+        .eq("company_id", companyId)
+        .order("created_at", { ascending: false });
 
-    if (!companyId) {
+      if (error) {
+        setError(error.message);
+        setItems([]);
+      } else {
+        setItems((data || []) as Item[]);
+      }
+
       setLoading(false);
-      setItems([]);
-      return;
-    }
+    };
 
-    const { data, error } = await supabase
-      .from("items")
-      .select("id, name, description, category, location, quantity, te_number, type, image_url, created_at")
-      .eq("company_id", companyId)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setError(error.message);
-      setItems([]);
-    } else {
-      setItems((data || []) as Item[]);
-    }
-
-    setLoading(false);
-  };
+    void load();
+  }, [companyId, router]);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -89,38 +173,40 @@ export default function ItemsPage() {
     return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [filtered]);
 
-  if (loading || companyLoading) {
+  if (loading) {
     return <div className="text-slate-500">Loading inventory…</div>;
   }
 
-  if (!companyId) {
-    return (
-      <div className="bg-white border rounded-xl p-4 text-sm text-slate-700 max-w-md">
-        No company selected.
-        <div className="mt-3">
-          <Link href="/select-company" className="text-emerald-700 hover:underline">
-            Select company
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
+      {selected && <ItemModal companyId={companyId} item={selected} onClose={() => setSelected(null)} />}
+
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">Stock Module</h1>
+          <h1 className="text-xl font-semibold text-slate-900">Stock</h1>
           <div className="text-sm text-slate-500 mt-1">{filtered.length} item(s)</div>
         </div>
 
-        <Link
-          href={`/${companyId}/add-item`}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
-        >
-          <Plus className="h-4 w-4" />
-          Add Item
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/${companyId}/add-item`}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
+          >
+            <Plus className="h-4 w-4" />
+            Add Item
+          </Link>
+
+          <div className="relative">
+            <Link
+              href={`/${companyId}/settings`}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border bg-white text-sm font-medium hover:bg-slate-50"
+              title="Manage types, categories and locations"
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+              Manage Master Data
+            </Link>
+          </div>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border shadow-sm p-4">
@@ -129,7 +215,7 @@ export default function ItemsPage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search items, TE#, category, location, type"
+            placeholder="Search by name, TE#, category, location, type"
             className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
           />
         </div>
@@ -146,6 +232,7 @@ export default function ItemsPage() {
                 <div className="text-sm font-semibold text-slate-900">{category}</div>
                 <div className="text-xs text-slate-500">{list.length} item(s)</div>
               </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-white border-b">
@@ -160,7 +247,11 @@ export default function ItemsPage() {
                   </thead>
                   <tbody>
                     {list.map((it) => (
-                      <tr key={it.id} className="border-t">
+                      <tr
+                        key={it.id}
+                        className="border-t hover:bg-slate-50 cursor-pointer"
+                        onClick={() => setSelected(it)}
+                      >
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
                             <div className="h-10 w-10 rounded-lg border bg-slate-50 overflow-hidden flex items-center justify-center shrink-0">
@@ -181,7 +272,7 @@ export default function ItemsPage() {
                         <td className="px-4 py-3 text-slate-700">{it.type || "-"}</td>
                         <td className="px-4 py-3 text-slate-700">{it.location || "-"}</td>
                         <td className="px-4 py-3 text-right">{it.quantity ?? 0}</td>
-                        <td className="px-4 py-3 text-right">
+                        <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                           <Link href={`/${companyId}/edit-item/${it.id}`} className="text-emerald-700 hover:text-emerald-900">
                             Edit →
                           </Link>

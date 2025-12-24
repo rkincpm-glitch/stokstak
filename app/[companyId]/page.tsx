@@ -30,7 +30,7 @@ export default function CompanyHomePage() {
   const [err, setErr] = useState<string | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [q, setQ] = useState("");
-  const [view, setView] = useState<ViewMode>("list");
+  const [view, setView] = useState<ViewMode>("tiles");
 
   useEffect(() => {
     const run = async () => {

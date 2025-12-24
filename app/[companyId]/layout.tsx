@@ -11,13 +11,14 @@ export default async function CompanyLayout({
   const { companyId } = await params;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
+    <div className="min-h-screen bg-slate-50">
       <Sidebar companyId={companyId} />
 
-      <div className="flex-1 min-w-0">
-        <header className="h-16 border-b bg-white flex items-center px-6">
+      {/* Main content area (offset for fixed sidebar) */}
+      <div className="pl-64">
+        <header className="h-16 border-b bg-white flex items-center px-6 sticky top-0 z-30">
           <div className="text-sm text-slate-600">
-            Company: <span className="font-medium text-slate-900">{companyId}</span>
+            Workspace: <span className="font-medium text-slate-900">{companyId}</span>
           </div>
         </header>
 
