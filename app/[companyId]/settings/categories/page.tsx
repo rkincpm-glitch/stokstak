@@ -1,1 +1,1 @@
-export { default } from "../../../settings/categories/page";
+export { default } from "@/app/settings/categories/page";

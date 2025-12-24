@@ -1,5 +1,10 @@
 import { redirect } from "next/navigation";
 
-export default function EditItemIndex({ params }: { params: { companyId: string } }) {
-  redirect(`/${params.companyId}`);
+export default async function EditItemIndex({
+  params,
+}: {
+  params: Promise<{ companyId: string }>;
+}) {
+  const { companyId } = await params;
+  redirect(`/${companyId}/items`);
 }

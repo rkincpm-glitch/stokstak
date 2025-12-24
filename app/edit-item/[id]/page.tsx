@@ -46,6 +46,8 @@ type ItemRow = {
   purchase_price: number | string | null;
   purchase_date: string | null;
   user_id: string | null;
+  life_years?: number | null;
+  depreciation_percent?: number | null;
 };
 
 function coerceParam(v: unknown): string | null {
@@ -103,6 +105,8 @@ export default function EditItemPage() {
     quantity: 0,
     purchase_price: "" as "" | number,
     purchase_date: "" as "" | string,
+    life_years: "" as "" | number,
+    depreciation_percent: "" as "" | number,
     image_url: null as string | null,
     image_url_2: null as string | null,
   });
@@ -225,7 +229,7 @@ export default function EditItemPage() {
       const { data: itemData, error: itemError } = await supabase
         .from("items")
         .select(
-          "id,company_id,name,description,category,location,type,quantity,image_url,image_url_2,te_number,purchase_price,purchase_date,user_id"
+          "id,company_id,name,description,category,location,type,quantity,image_url,image_url_2,te_number,purchase_price,purchase_date,life_years,depreciation_percent,user_id"
         )
         .eq("company_id", companyId)
         .eq("id", itemId)
@@ -252,6 +256,8 @@ export default function EditItemPage() {
         quantity: Number(row.quantity ?? 0),
         purchase_price: Number.isFinite(normalizedPrice as number) ? (normalizedPrice as number) : "",
         purchase_date: row.purchase_date ?? "",
+        life_years: (row as any).life_years ?? "",
+        depreciation_percent: (row as any).depreciation_percent ?? "",
         image_url: row.image_url ?? null,
         image_url_2: row.image_url_2 ?? null,
       });
@@ -300,6 +306,9 @@ export default function EditItemPage() {
       image_url_2: form.image_url_2,
       purchase_price: form.purchase_price === "" ? null : Number(form.purchase_price),
       purchase_date: form.purchase_date === "" ? null : form.purchase_date,
+      life_years: form.life_years === "" ? null : Number(form.life_years),
+      depreciation_percent:
+        form.depreciation_percent === "" ? null : Number(form.depreciation_percent),
     };
 
     const { error } = await supabase
@@ -348,7 +357,7 @@ export default function EditItemPage() {
       return;
     }
 
-    router.push("/");
+    router.push(`/${companyId}/items`);
   };
 
   const handleImageFileChange = async (
@@ -407,7 +416,7 @@ export default function EditItemPage() {
           <code>company_users</code>.
           <div className="mt-3">
             <Link href="/" className="text-blue-600 hover:underline">
-              Back to dashboard
+              Back to stock
             </Link>
           </div>
         </div>
@@ -427,10 +436,10 @@ export default function EditItemPage() {
             </div>
           </div>
           <button
-            onClick={() => router.push("/")}
+            onClick={() => router.push(`/${companyId}`)}
             className="mt-4 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700"
           >
-            Back to dashboard
+            Back to stock
           </button>
         </div>
       </div>
@@ -443,9 +452,9 @@ export default function EditItemPage() {
     <div className="min-h-screen bg-slate-50">
       <header className="bg-white border-b border-slate-200">
         <div className="max-w-3xl mx-auto px-4 h-16 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900">
+          <Link href={`/${companyId}/items`} className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900">
             <ArrowLeft className="w-4 h-4" />
-            Back to dashboard
+            Back to stock
           </Link>
           <p className="text-sm font-semibold text-slate-900">Edit Item – {form.name}</p>
         </div>
@@ -512,7 +521,7 @@ export default function EditItemPage() {
                   Category <span className="text-red-500">*</span>
                 </label>
                 <Link
-                  href="/settings/categories"
+                  href={`/${companyId}/settings/categories`}
                   className="text-xs text-blue-600 hover:underline flex items-center gap-1"
                 >
                   <Settings2 className="w-3 h-3" /> Manage
@@ -543,7 +552,7 @@ export default function EditItemPage() {
                   Location <span className="text-red-500">*</span>
                 </label>
                 <Link
-                  href="/settings/locations"
+                  href={`/${companyId}/settings/locations`}
                   className="text-xs text-blue-600 hover:underline flex items-center gap-1"
                 >
                   <Settings2 className="w-3 h-3" /> Manage
@@ -578,6 +587,86 @@ export default function EditItemPage() {
               className="w-full px-3 py-2 border rounded-lg text-sm"
             />
           </div>
+          <section className="space-y-3">
+            <h2 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Stock & Purchase</h2>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Quantity</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={form.quantity}
+                  onChange={(e) => setField("quantity", Number(e.target.value))}
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Purchase Price (per unit)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={form.purchase_price}
+                  onChange={(e) =>
+                    setField(
+                      "purchase_price",
+                      e.target.value === "" ? "" : Number(e.target.value)
+                    )
+                  }
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Purchase Date</label>
+                <input
+                  type="date"
+                  value={form.purchase_date}
+                  onChange={(e) => setField("purchase_date", e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm bg-white text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Life of Item (years)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={form.life_years}
+                  onChange={(e) =>
+                    setField(
+                      "life_years",
+                      e.target.value === "" ? "" : Number(e.target.value)
+                    )
+                  }
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-slate-600 mb-1">Depreciation % (per year)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={form.depreciation_percent}
+                  onChange={(e) =>
+                    setField(
+                      "depreciation_percent",
+                      e.target.value === "" ? "" : Number(e.target.value)
+                    )
+                  }
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+            </div>
+          </section>
+
 
           <section className="space-y-3">
             <h2 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Photos</h2>

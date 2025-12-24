@@ -1,1 +1,1 @@
-export { default } from "../../../settings/types/page";
+export { default } from "@/app/settings/types/page";
