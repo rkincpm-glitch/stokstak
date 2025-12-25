@@ -9,32 +9,17 @@ type Company = {
   name: string;
 };
 
-// PostgREST can return nested relations as an array (common) or as an object (depending on relationship).
-type CompanyRelation = Company[] | Company | null;
-
-type MembershipRowFromDb = {
-  company_id: string;
-  companies: CompanyRelation;
-};
-
-type Membership = {
-  company_id: string;
-  company: Company | null;
-};
-
-function normalizeCompany(rel: CompanyRelation): Company | null {
-  if (!rel) return null;
-  if (Array.isArray(rel)) return rel[0] ?? null;
-  return rel;
+function setActiveCompanyCookie(companyId: string) {
+  const isHttps = typeof window !== "undefined" && window.location?.protocol === "https:";
+  const secure = isHttps ? "; Secure" : "";
+  document.cookie = `stokstak_company_id=${encodeURIComponent(companyId)}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
 }
 
 export default function SelectCompanyPage() {
   const router = useRouter();
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,114 +28,125 @@ export default function SelectCompanyPage() {
       setLoading(true);
       setErr(null);
 
-      const { data: authData, error: authErr } = await supabase.auth.getUser();
-      if (authErr) {
-        if (!cancelled) {
-          setErr(authErr.message);
-          setLoading(false);
-        }
-        return;
-      }
+      const supabase = createSupabaseBrowserClient();
 
+      const { data: authData } = await supabase.auth.getUser();
       const user = authData?.user;
+
       if (!user) {
         router.replace("/auth");
         return;
       }
 
-      const { data, error } = await supabase
+      // Step 1: get membership rows (this should be allowed by policy: user_id = auth.uid())
+      const { data: memberships, error: mErr } = await supabase
         .from("company_users")
-        .select("company_id, companies(id, name)")
+        .select("company_id")
         .eq("user_id", user.id);
 
-      if (error) {
-        if (!cancelled) {
-          setErr(error.message);
-          setMemberships([]);
-          setLoading(false);
-        }
-        return;
-      }
+      if (cancelled) return;
 
-      const rows = (data ?? []) as unknown as MembershipRowFromDb[];
-
-      const normalized: Membership[] = rows
-        .map((r) => ({
-          company_id: String(r.company_id),
-          company: normalizeCompany(r.companies),
-        }))
-        .filter((m) => Boolean(m.company_id));
-
-      // If exactly one company, jump straight in
-      if (normalized.length === 1) {
-        router.replace(`/${normalized[0].company_id}`);
-        return;
-      }
-
-      if (!cancelled) {
-        setMemberships(normalized);
+      if (mErr) {
+        setErr(mErr.message);
+        setCompanies([]);
         setLoading(false);
+        return;
       }
+
+      const companyIds = (memberships || [])
+        .map((r: any) => String(r.company_id))
+        .filter(Boolean);
+
+      if (companyIds.length === 0) {
+        setCompanies([]);
+        setLoading(false);
+        return;
+      }
+
+      // Step 2: fetch companies by id without relying on a join (joins can be blocked by overly strict policies)
+      const { data: comps, error: cErr } = await supabase
+        .from("companies")
+        .select("id, name")
+        .in("id", companyIds)
+        .order("name", { ascending: true });
+
+      if (cancelled) return;
+
+      if (cErr) {
+        // If your `companies` table has a strict policy tied to `current_company_id()`, the name lookup can be blocked
+        // before a company is selected. In that case, fall back to showing raw company IDs.
+        setErr(null);
+        setCompanies(companyIds.map((id) => ({ id, name: id })));
+        setLoading(false);
+        return;
+      }
+
+      const normalized = (comps || []) as Company[];
+
+      if (normalized.length === 1) {
+        setActiveCompanyCookie(normalized[0].id);
+        router.replace(`/${normalized[0].id}`);
+        return;
+      }
+
+      setCompanies(normalized);
+      setLoading(false);
     };
 
-    run();
-
+    void run();
     return () => {
       cancelled = true;
     };
-  }, [router, supabase]);
+  }, [router]);
 
-  if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
+  const emptyState = useMemo(() => {
+    if (loading) return null;
+    if (companies.length > 0) return null;
+
+    return (
+      <div className="mt-6 rounded-xl border bg-white p-4 text-sm text-slate-700">
+        <div className="font-semibold text-slate-900">No companies found for this user.</div>
+        <div className="mt-2 text-slate-600">
+          Ask your admin to add your user to a company in <span className="font-medium">company_users</span>.
+        </div>
+      </div>
+    );
+  }, [companies.length, loading]);
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading…</div>;
 
   return (
-    <div style={{ maxWidth: 980, margin: "40px auto", padding: 16 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700 }}>Select Company</h1>
-      <p style={{ opacity: 0.7, marginTop: 8 }}>
-        Choose the workspace you want to access.
-      </p>
+    <div className="min-h-screen bg-slate-50">
+      <div className="max-w-3xl mx-auto px-4 py-10">
+        <h1 className="text-xl font-semibold text-slate-900">Select Company</h1>
+        <p className="text-sm text-slate-600 mt-2">Choose the workspace you want to access.</p>
 
-      {err && (
-        <div
-          style={{
-            marginTop: 14,
-            padding: 12,
-            border: "1px solid #f5c2c2",
-            background: "#fff5f5",
-            borderRadius: 12,
-            color: "crimson",
-          }}
-        >
-          {err}
-        </div>
-      )}
+        {err && (
+          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {err}
+          </div>
+        )}
 
-      {memberships.length === 0 ? (
-        <div style={{ marginTop: 16, opacity: 0.8 }}>
-          No companies found for your user.
-        </div>
-      ) : (
-        <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
-          {memberships.map((m) => (
-            <button
-              key={m.company_id}
-              onClick={() => router.push(`/${m.company_id}`)}
-              style={{
-                textAlign: "left",
-                padding: 14,
-                border: "1px solid #e5e5e5",
-                borderRadius: 12,
-                cursor: "pointer",
-                background: "white",
-              }}
-            >
-              <div style={{ fontWeight: 700 }}>
-                {m.company?.name ?? "Company"}
-              </div>
-              <div style={{ opacity: 0.7, fontSize: 13 }}>{m.company_id}</div>
-            </button>
-          ))}
-        </div>
-      )}
+        {emptyState}
+
+        {companies.length > 0 && (
+          <div className="mt-6 grid gap-3">
+            {companies.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => {
+                  setActiveCompanyCookie(c.id);
+                  router.push(`/${c.id}`);
+                }}
+                className="text-left rounded-xl border bg-white p-4 hover:shadow-sm transition-shadow"
+              >
+                <div className="font-semibold text-slate-900">{c.name}</div>
+                <div className="text-xs text-slate-500 mt-1">{c.id}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

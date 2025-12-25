@@ -2,25 +2,33 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import type { ComponentType } from "react";
+import { useMemo } from "react";
 import {
+  Home,
   Boxes,
   ClipboardList,
   BarChart3,
   Settings,
-  Home,
+  Building2,
   LogOut,
-  X,
 } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 
-type Props = {
-  companyId: string;
-  /** Optional callback used by mobile drawer to close on navigation */
-  onNavigate?: () => void;
+export type AppRole = "admin" | "president" | "pm" | "purchaser" | "receiver" | "user" | string;
+
+type NavItem = {
+  key: string;
+  label: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  showIf?: (role: AppRole | null) => boolean;
 };
 
-function NavItem({
+function cx(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function NavLink({
   href,
   label,
   icon: Icon,
@@ -29,7 +37,7 @@ function NavItem({
 }: {
   href: string;
   label: string;
-  icon: ComponentType<{ className?: string }>;
+  icon: React.ComponentType<{ className?: string }>;
   active: boolean;
   onClick?: () => void;
 }) {
@@ -37,12 +45,12 @@ function NavItem({
     <Link
       href={href}
       onClick={onClick}
-      className={[
-        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+      className={cx(
+        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors border",
         active
-          ? "bg-emerald-50 text-emerald-800 border border-emerald-100"
-          : "text-slate-700 hover:bg-slate-100",
-      ].join(" ")}
+          ? "bg-emerald-50 text-emerald-800 border-emerald-100"
+          : "text-slate-700 hover:bg-slate-100 border-transparent"
+      )}
     >
       <Icon className="h-4 w-4" />
       <span className="font-medium">{label}</span>
@@ -50,47 +58,72 @@ function NavItem({
   );
 }
 
-function clearActiveCompanyCookie() {
-  const isHttps = typeof window !== "undefined" && window.location?.protocol === "https:";
-  const secure = isHttps ? "; Secure" : "";
-  document.cookie = `stokstak_company_id=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
-}
-
-function SidebarContent({ companyId, onNavigate }: Props) {
+export default function Sidebar({
+  companyId,
+  role,
+  onNavigate,
+}: {
+  companyId: string;
+  role: AppRole | null;
+  onNavigate?: () => void; // used to close mobile drawer
+}) {
   const pathname = usePathname();
   const router = useRouter();
 
-  const base = `/${companyId}`;
-  const items = [
-    { href: `${base}`, label: "Home", icon: Home },
-    { href: `${base}/items`, label: "Stock", icon: Boxes },
-    { href: `${base}/purchase-requests`, label: "Purchasing", icon: ClipboardList },
-    { href: `${base}/reports`, label: "Reports", icon: BarChart3 },
-    { href: `${base}/settings`, label: "Settings", icon: Settings },
-  ];
+  const items: NavItem[] = useMemo(() => {
+    const base = `/${companyId}`;
+    return [
+      { key: "home", label: "Home", href: `${base}`, icon: Home },
+      { key: "stock", label: "Stock", href: `${base}/items`, icon: Boxes },
+      { key: "purchasing", label: "Purchasing", href: `${base}/purchase-requests`, icon: ClipboardList },
+      {
+        key: "vendors",
+        label: "Vendors",
+        href: `${base}/vendors`,
+        icon: Building2,
+        showIf: (r) => ["admin", "purchaser", "president"].includes(String(r || "").toLowerCase()),
+      },
+      {
+        key: "reports",
+        label: "Reports",
+        href: `${base}/reports`,
+        icon: BarChart3,
+        showIf: (r) => ["admin", "pm", "president", "purchaser"].includes(String(r || "").toLowerCase()),
+      },
+      {
+        key: "settings",
+        label: "Settings",
+        href: `${base}/settings`,
+        icon: Settings,
+        showIf: (r) => ["admin", "president"].includes(String(r || "").toLowerCase()),
+      },
+    ];
+  }, [companyId]);
 
-  const onLogout = async () => {
-    try {
-      const supabase = createSupabaseBrowserClient();
-      await supabase.auth.signOut();
-    } finally {
-      clearActiveCompanyCookie();
-      onNavigate?.();
-      router.replace("/auth");
-      router.refresh();
-    }
+  const visible = items.filter((it) => (it.showIf ? it.showIf(role) : true));
+
+  const logout = async () => {
+    const supabase = createSupabaseBrowserClient();
+    await supabase.auth.signOut();
+
+    // Clear active company cookie
+    const isHttps = typeof window !== "undefined" && window.location?.protocol === "https:";
+    const secure = isHttps ? "; Secure" : "";
+    document.cookie = `stokstak_company_id=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+
+    router.replace("/auth");
   };
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="h-16 px-4 flex items-center border-b shrink-0">
+    <aside className="h-full w-72 border-r bg-white flex flex-col">
+      <div className="h-16 px-4 flex items-center border-b">
         <div className="text-sm font-semibold text-slate-900">Stokstak</div>
       </div>
 
-      <nav className="p-3 space-y-2 overflow-y-auto">
-        {items.map((it) => (
-          <NavItem
-            key={it.href}
+      <nav className="p-3 space-y-2 flex-1">
+        {visible.map((it) => (
+          <NavLink
+            key={it.key}
             href={it.href}
             label={it.label}
             icon={it.icon}
@@ -100,71 +133,24 @@ function SidebarContent({ companyId, onNavigate }: Props) {
         ))}
       </nav>
 
-      <div className="mt-auto p-3 border-t space-y-2">
+      <div className="p-3 border-t space-y-2">
         <Link
           href="/select-company"
           onClick={onNavigate}
-          className="block text-xs text-slate-600 hover:text-slate-900"
+          className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
         >
-          Switch company
+          <span className="font-medium">Switch company</span>
+          <span className="text-xs text-slate-400">↗</span>
         </Link>
 
         <button
-          onClick={onLogout}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-100"
-          type="button"
+          onClick={logout}
+          className="w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
         >
           <LogOut className="h-4 w-4" />
           <span className="font-medium">Logout</span>
         </button>
       </div>
-    </div>
-  );
-}
-
-/** Desktop sidebar (always visible) */
-export default function Sidebar({ companyId }: { companyId: string }) {
-  return (
-    <aside className="hidden md:flex fixed left-0 top-0 h-screen w-64 border-r bg-white z-40">
-      <SidebarContent companyId={companyId} />
     </aside>
-  );
-}
-
-/** Mobile drawer sidebar (opened on demand) */
-export function MobileSidebar({
-  companyId,
-  open,
-  onClose,
-}: {
-  companyId: string;
-  open: boolean;
-  onClose: () => void;
-}) {
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 md:hidden">
-      <button
-        type="button"
-        aria-label="Close menu"
-        onClick={onClose}
-        className="absolute inset-0 bg-black/30"
-      />
-      <aside className="absolute left-0 top-0 h-full w-72 max-w-[85vw] bg-white border-r shadow-xl">
-        <div className="h-16 px-4 flex items-center justify-between border-b">
-          <div className="text-sm font-semibold text-slate-900">Stokstak</div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-lg hover:bg-slate-100"
-            aria-label="Close"
-          >
-            <X className="h-5 w-5 text-slate-700" />
-          </button>
-        </div>
-        <SidebarContent companyId={companyId} onNavigate={onClose} />
-      </aside>
-    </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type UseCompanyResult = {
   loading: boolean;
@@ -9,6 +9,12 @@ type UseCompanyResult = {
   role: string | null;
   error: string | null;
 };
+
+function getCookie(name: string) {
+  if (typeof document === "undefined") return null;
+  const m = document.cookie.match(new RegExp("(^| )" + name.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&") + "=([^;]+)"));
+  return m ? decodeURIComponent(m[2]) : null;
+}
 
 export function useCompany(): UseCompanyResult {
   const [loading, setLoading] = useState(true);
@@ -19,14 +25,24 @@ export function useCompany(): UseCompanyResult {
   useEffect(() => {
     let cancelled = false;
 
-    async function run() {
+    const run = async () => {
       setLoading(true);
       setError(null);
 
-      const { data: userData, error: userErr } = await supabase.auth.getUser();
-      if (userErr) console.error(userErr);
+      const supabase = createSupabaseBrowserClient();
 
-      const user = userData?.user;
+      const { data: authData, error: authErr } = await supabase.auth.getUser();
+      if (authErr) {
+        if (!cancelled) {
+          setError(authErr.message);
+          setCompanyId(null);
+          setRole(null);
+          setLoading(false);
+        }
+        return;
+      }
+
+      const user = authData?.user;
       if (!user) {
         if (!cancelled) {
           setCompanyId(null);
@@ -36,17 +52,24 @@ export function useCompany(): UseCompanyResult {
         return;
       }
 
-      // With RLS, user can only read their own membership rows
+      const activeCompanyId = getCookie("stokstak_company_id");
+      if (!activeCompanyId) {
+        if (!cancelled) {
+          setCompanyId(null);
+          setRole(null);
+          setLoading(false);
+        }
+        return;
+      }
+
       const { data, error: cuErr } = await supabase
         .from("company_users")
         .select("company_id, role")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: true })
-        .limit(1)
+        .eq("company_id", activeCompanyId)
         .maybeSingle();
 
       if (cuErr) {
-        console.error(cuErr);
         if (!cancelled) {
           setError("Failed to load company membership.");
           setCompanyId(null);
@@ -56,12 +79,21 @@ export function useCompany(): UseCompanyResult {
         return;
       }
 
+      if (!data?.company_id) {
+        if (!cancelled) {
+          setCompanyId(null);
+          setRole(null);
+          setLoading(false);
+        }
+        return;
+      }
+
       if (!cancelled) {
-        setCompanyId(data?.company_id ?? null);
-        setRole(data?.role ?? null);
+        setCompanyId(String(data.company_id));
+        setRole((data as any).role ?? null);
         setLoading(false);
       }
-    }
+    };
 
     void run();
     return () => {

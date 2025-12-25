@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
-import { X, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { Plus, Search, X, ClipboardCheck, Settings2, Pencil } from "lucide-react";
 
 type Item = {
   id: string;
@@ -19,95 +19,16 @@ type Item = {
   created_at: string | null;
 };
 
-function ItemModal({
-  companyId,
-  item,
-  onClose,
-}: {
-  companyId: string;
-  item: Item;
-  onClose: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl border overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b bg-slate-50">
-            <div>
-              <div className="text-sm font-semibold text-slate-900">{item.name}</div>
-              <div className="text-xs text-slate-500 mt-0.5">
-                TE: {item.te_number || "-"} • Qty: {item.quantity ?? 0}
-              </div>
-            </div>
-            <button
-              type="button"
-              className="p-2 rounded-lg hover:bg-slate-100"
-              onClick={onClose}
-              aria-label="Close"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+type Verification = {
+  id: string;
+  verified_at: string;
+  verified_qty: number;
+  notes: string | null;
+  created_at: string | null;
+};
 
-          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="rounded-xl border bg-slate-50 overflow-hidden flex items-center justify-center min-h-[220px]">
-              {item.image_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={item.image_url} alt={item.name} className="h-full w-full object-cover" />
-              ) : (
-                <div className="text-sm text-slate-400">No image</div>
-              )}
-            </div>
-
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="p-3 rounded-xl border bg-white">
-                  <div className="text-xs text-slate-500">Category</div>
-                  <div className="font-medium text-slate-900 mt-1">{item.category || "Uncategorized"}</div>
-                </div>
-                <div className="p-3 rounded-xl border bg-white">
-                  <div className="text-xs text-slate-500">Type</div>
-                  <div className="font-medium text-slate-900 mt-1">{item.type || "—"}</div>
-                </div>
-                <div className="p-3 rounded-xl border bg-white">
-                  <div className="text-xs text-slate-500">Location</div>
-                  <div className="font-medium text-slate-900 mt-1">{item.location || "—"}</div>
-                </div>
-                <div className="p-3 rounded-xl border bg-white">
-                  <div className="text-xs text-slate-500">Quantity</div>
-                  <div className="font-medium text-slate-900 mt-1">{item.quantity ?? 0}</div>
-                </div>
-              </div>
-
-              {item.description ? (
-                <div className="p-3 rounded-xl border bg-white">
-                  <div className="text-xs text-slate-500">Description</div>
-                  <div className="text-sm text-slate-900 mt-1 whitespace-pre-wrap">{item.description}</div>
-                </div>
-              ) : null}
-
-              <div className="flex items-center gap-2 pt-1">
-                <Link
-                  href={`/${companyId}/edit-item/${item.id}`}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
-                >
-                  Edit Item
-                </Link>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg border bg-white text-sm font-medium hover:bg-slate-50"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+function cx(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
 }
 
 export default function ItemsPage() {
@@ -119,39 +40,57 @@ export default function ItemsPage() {
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [q, setQ] = useState("");
-  const [selected, setSelected] = useState<Item | null>(null);
+
+  const [active, setActive] = useState<Item | null>(null);
+  const [verifications, setVerifications] = useState<Verification[]>([]);
+  const [verLoading, setVerLoading] = useState(false);
+
+  const [showVerify, setShowVerify] = useState(false);
+  const [verifyDate, setVerifyDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [verifyQty, setVerifyQty] = useState<number>(0);
+  const [verifyNotes, setVerifyNotes] = useState<string>("");
+
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+
+  const loadItems = async () => {
+    setLoading(true);
+    setError(null);
+
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) {
+      router.replace("/auth");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("items")
+      .select("id, name, description, category, location, quantity, te_number, type, image_url, created_at")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      setError(error.message);
+      setItems([]);
+    } else {
+      setItems((data || []) as Item[]);
+    }
+
+    setLoading(false);
+  };
 
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      setError(null);
+    void loadItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId]);
 
-      const supabase = createSupabaseBrowserClient();
-
-      const { data: userData } = await supabase.auth.getUser();
-      if (!userData?.user) {
-        router.replace("/auth");
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("items")
-        .select("id, name, description, category, location, quantity, te_number, type, image_url, created_at")
-        .eq("company_id", companyId)
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        setError(error.message);
-        setItems([]);
-      } else {
-        setItems((data || []) as Item[]);
-      }
-
-      setLoading(false);
-    };
-
-    void load();
-  }, [companyId, router]);
+  // Auto-open item if ?open=<id> was passed
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const id = new URLSearchParams(window.location.search).get("open");
+    if (!id) return;
+    const found = items.find((i) => i.id === id);
+    if (found) setActive(found);
+  }, [items]);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -162,32 +101,67 @@ export default function ItemsPage() {
     });
   }, [items, q]);
 
-  const grouped = useMemo(() => {
-    const m = new Map<string, Item[]>();
-    for (const it of filtered) {
-      const key = (it.category || "Uncategorized").trim() || "Uncategorized";
-      const arr = m.get(key) || [];
-      arr.push(it);
-      m.set(key, arr);
+  const openItem = async (it: Item) => {
+    setActive(it);
+    setShowVerify(false);
+    setVerifyQty(it.quantity ?? 0);
+    setVerifyNotes("");
+    setVerifications([]);
+    setVerLoading(true);
+
+    const { data, error } = await supabase
+      .from("stock_verifications")
+      .select("id, verified_at, verified_qty, notes, created_at")
+      .eq("company_id", companyId)
+      .eq("item_id", it.id)
+      .order("verified_at", { ascending: false })
+      .limit(10);
+
+    if (!error) setVerifications((data || []) as Verification[]);
+    setVerLoading(false);
+  };
+
+  const submitVerification = async () => {
+    if (!active) return;
+
+    const { error } = await supabase.from("stock_verifications").insert({
+      company_id: companyId,
+      item_id: active.id,
+      verified_at: verifyDate,
+      verified_qty: verifyQty,
+      notes: verifyNotes || null,
+    });
+
+    if (error) {
+      setError(error.message);
+      return;
     }
-    return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [filtered]);
+
+    setShowVerify(false);
+    await openItem(active); // refresh history
+  };
 
   if (loading) {
     return <div className="text-slate-500">Loading inventory…</div>;
   }
 
   return (
-    <div className="space-y-5">
-      {selected && <ItemModal companyId={companyId} item={selected} onClose={() => setSelected(null)} />}
-
-      <div className="flex items-start justify-between gap-4">
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Stock</h1>
           <div className="text-sm text-slate-500 mt-1">{filtered.length} item(s)</div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link
+            href={`/${companyId}/settings`}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border bg-white text-sm text-slate-700 hover:bg-slate-50"
+          >
+            <Settings2 className="h-4 w-4" />
+            Manage Types / Categories / Locations
+          </Link>
+
           <Link
             href={`/${companyId}/add-item`}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
@@ -195,17 +169,6 @@ export default function ItemsPage() {
             <Plus className="h-4 w-4" />
             Add Item
           </Link>
-
-          <div className="relative">
-            <Link
-              href={`/${companyId}/settings`}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border bg-white text-sm font-medium hover:bg-slate-50"
-              title="Manage types, categories and locations"
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-              Manage Master Data
-            </Link>
-          </div>
         </div>
       </div>
 
@@ -215,75 +178,188 @@ export default function ItemsPage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search by name, TE#, category, location, type"
-            className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+            placeholder="Search items…"
+            className="w-full px-3 py-2 border rounded-lg text-sm bg-white text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
           />
         </div>
         {error && <div className="mt-3 text-sm text-red-600">{error}</div>}
       </div>
 
-      {grouped.length === 0 ? (
-        <div className="bg-white rounded-xl border shadow-sm p-4 text-sm text-slate-500">No items found.</div>
-      ) : (
-        <div className="space-y-4">
-          {grouped.map(([category, list]) => (
-            <section key={category} className="bg-white rounded-xl border shadow-sm overflow-hidden">
-              <div className="px-4 py-3 bg-slate-50 border-b">
-                <div className="text-sm font-semibold text-slate-900">{category}</div>
-                <div className="text-xs text-slate-500">{list.length} item(s)</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {filtered.map((it) => (
+          <button
+            key={it.id}
+            onClick={() => void openItem(it)}
+            className="text-left rounded-xl border bg-white hover:shadow-md transition-shadow overflow-hidden"
+          >
+            <div className="h-32 bg-slate-50 border-b overflow-hidden flex items-center justify-center">
+              {it.image_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={it.image_url} alt={it.name} className="h-full w-full object-cover" />
+              ) : (
+                <div className="text-xs text-slate-400">No photo</div>
+              )}
+            </div>
+            <div className="p-3">
+              <div className="font-semibold text-slate-900">{it.name}</div>
+              <div className="text-xs text-slate-500 mt-1">
+                TE: {it.te_number || "-"} • Qty: {it.quantity ?? 0}
+              </div>
+              <div className="text-xs text-slate-500 mt-1">
+                {it.category || "Uncategorized"} • {it.location || "—"} • {it.type || "—"}
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {/* Modal */}
+      {active && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setActive(null)} aria-hidden="true" />
+          <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-xl overflow-hidden">
+            <div className="p-4 border-b flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-semibold text-slate-900">{active.name}</div>
+                <div className="text-sm text-slate-500 mt-1">
+                  {active.category || "Uncategorized"} • {active.location || "—"} • {active.type || "—"}
+                </div>
+              </div>
+              <button className="p-2 rounded-lg hover:bg-slate-100" onClick={() => setActive(null)} aria-label="Close">
+                <X className="h-5 w-5 text-slate-600" />
+              </button>
+            </div>
+
+            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="rounded-xl border bg-slate-50 overflow-hidden">
+                <div className="h-48 flex items-center justify-center">
+                  {active.image_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={active.image_url} alt={active.name} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="text-sm text-slate-400">No photo</div>
+                  )}
+                </div>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-white border-b">
-                    <tr className="text-left text-xs text-slate-500">
-                      <th className="px-4 py-2">Item</th>
-                      <th className="px-4 py-2">TE #</th>
-                      <th className="px-4 py-2">Type</th>
-                      <th className="px-4 py-2">Location</th>
-                      <th className="px-4 py-2 text-right">Qty</th>
-                      <th className="px-4 py-2 text-right">Edit</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {list.map((it) => (
-                      <tr
-                        key={it.id}
-                        className="border-t hover:bg-slate-50 cursor-pointer"
-                        onClick={() => setSelected(it)}
-                      >
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-3">
-                            <div className="h-10 w-10 rounded-lg border bg-slate-50 overflow-hidden flex items-center justify-center shrink-0">
-                              {it.image_url ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={it.image_url} alt={it.name} className="h-full w-full object-cover" />
-                              ) : (
-                                <div className="text-[10px] text-slate-400">No photo</div>
-                              )}
-                            </div>
-                            <div>
-                              <div className="font-medium text-slate-900">{it.name}</div>
-                              {it.description && <div className="text-xs text-slate-500">{it.description}</div>}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-slate-700">{it.te_number || "-"}</td>
-                        <td className="px-4 py-3 text-slate-700">{it.type || "-"}</td>
-                        <td className="px-4 py-3 text-slate-700">{it.location || "-"}</td>
-                        <td className="px-4 py-3 text-right">{it.quantity ?? 0}</td>
-                        <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                          <Link href={`/${companyId}/edit-item/${it.id}`} className="text-emerald-700 hover:text-emerald-900">
-                            Edit →
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="space-y-3">
+                <div className="rounded-xl border p-3">
+                  <div className="text-xs text-slate-500">Quantity</div>
+                  <div className="text-xl font-semibold text-slate-900">{active.quantity ?? 0}</div>
+                </div>
+
+                <div className="rounded-xl border p-3">
+                  <div className="text-xs text-slate-500">TE #</div>
+                  <div className="text-sm font-medium text-slate-900">{active.te_number || "-"}</div>
+                </div>
+
+                {active.description && (
+                  <div className="rounded-xl border p-3">
+                    <div className="text-xs text-slate-500">Description</div>
+                    <div className="text-sm text-slate-800 mt-1">{active.description}</div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    href={`/${companyId}/edit-item/${active.id}`}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border bg-white text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    <Pencil className="h-4 w-4" />
+                    Edit item
+                  </Link>
+
+                  <button
+                    onClick={() => setShowVerify((v) => !v)}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
+                  >
+                    <ClipboardCheck className="h-4 w-4" />
+                    {showVerify ? "Close verification" : "Verify stock"}
+                  </button>
+                </div>
               </div>
-            </section>
-          ))}
+            </div>
+
+            <div className="p-4 border-t space-y-4">
+              {showVerify && (
+                <div className="rounded-xl border p-4 bg-slate-50">
+                  <div className="font-semibold text-slate-900">Record physical verification</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">Verification date</label>
+                      <input
+                        type="date"
+                        value={verifyDate}
+                        onChange={(e) => setVerifyDate(e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">Verified quantity</label>
+                      <input
+                        type="number"
+                        value={verifyQty}
+                        onChange={(e) => setVerifyQty(Number(e.target.value))}
+                        className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs text-slate-600 mb-1">Comments</label>
+                      <textarea
+                        value={verifyNotes}
+                        onChange={(e) => setVerifyNotes(e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900"
+                        rows={3}
+                        placeholder="Notes from the physical verification…"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-end gap-2">
+                    <button onClick={() => setShowVerify(false)} className="px-3 py-2 rounded-lg border bg-white text-sm">
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => void submitVerification()}
+                      className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
+                    >
+                      Save verification
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <div className="font-semibold text-slate-900">Verification history</div>
+                {verLoading ? (
+                  <div className="text-sm text-slate-500 mt-2">Loading history…</div>
+                ) : verifications.length === 0 ? (
+                  <div className="text-sm text-slate-500 mt-2">No verification records yet.</div>
+                ) : (
+                  <div className="mt-2 overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="text-xs text-slate-500">
+                        <tr className="text-left">
+                          <th className="py-2 pr-3">Date</th>
+                          <th className="py-2 pr-3 text-right">Qty</th>
+                          <th className="py-2">Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {verifications.map((v) => (
+                          <tr key={v.id} className="border-t">
+                            <td className="py-2 pr-3">{v.verified_at}</td>
+                            <td className="py-2 pr-3 text-right">{v.verified_qty}</td>
+                            <td className="py-2 text-slate-700">{v.notes || ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
