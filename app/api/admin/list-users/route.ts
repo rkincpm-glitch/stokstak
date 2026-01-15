@@ -85,5 +85,30 @@ export async function POST() {
     })
     .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
 
-  return NextResponse.json({ ok: true, users: rows });
+  // Companies + memberships (for UI assignment)
+  const { data: companies, error: compErr } = await admin
+    .from("companies")
+    .select("id, name")
+    .order("name", { ascending: true });
+
+  if (compErr) {
+    return NextResponse.json({ ok: true, users: rows, companies: [], membershipsByUserId: {} });
+  }
+
+  const { data: memberships } = await admin
+    .from("company_users")
+    .select("user_id, company_id, role")
+    .in("user_id", userIds);
+
+  const membershipsByUserId: Record<string, { company_id: string; role: string }[]> = {};
+  for (const m of memberships || []) {
+    const uid = String((m as any).user_id);
+    if (!membershipsByUserId[uid]) membershipsByUserId[uid] = [];
+    membershipsByUserId[uid].push({
+      company_id: String((m as any).company_id),
+      role: String((m as any).role || "member"),
+    });
+  }
+
+  return NextResponse.json({ ok: true, users: rows, companies: companies || [], membershipsByUserId });
 }

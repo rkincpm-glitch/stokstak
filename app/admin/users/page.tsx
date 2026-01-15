@@ -11,6 +11,13 @@ type UserRow = {
   display_name: string;
   role: string;
   is_active: boolean;
+  // derived (not saved via /update-user)
+  company_ids?: string[];
+};
+
+type CompanyMini = {
+  id: string;
+  name: string;
 };
 
 const ROLE_OPTIONS = ["pm", "requester", "purchaser", "receiver", "president", "admin"] as const;
@@ -19,6 +26,9 @@ export default function AdminUsersPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<UserRow[]>([]);
+  const [companies, setCompanies] = useState<CompanyMini[]>([]);
+  const [editingCompaniesFor, setEditingCompaniesFor] = useState<UserRow | null>(null);
+  const [companySelection, setCompanySelection] = useState<Record<string, boolean>>({});
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
 
@@ -40,7 +50,17 @@ export default function AdminUsersPage() {
         setLoading(false);
         return;
       }
-      setRows((json.users || []) as UserRow[]);
+      const users = (json.users || []) as UserRow[];
+      const comps = (json.companies || []) as CompanyMini[];
+      const membershipsByUserId = (json.membershipsByUserId || {}) as Record<string, { company_id: string }[]>;
+
+      for (const u of users) {
+        const mem = membershipsByUserId[u.id] || [];
+        u.company_ids = mem.map((m: any) => String(m.company_id));
+      }
+
+      setCompanies(comps);
+      setRows(users);
       setLoading(false);
     } catch (e: any) {
       setErrorMsg(e?.message || "Unable to load users.");
@@ -86,6 +106,41 @@ export default function AdminUsersPage() {
     } catch (e: any) {
       setErrorMsg(e?.message || "Error saving changes.");
       setSaveStatus("idle");
+    }
+  };
+
+  const openCompanyEditor = (u: UserRow) => {
+    setEditingCompaniesFor(u);
+    const initial: Record<string, boolean> = {};
+    for (const c of companies) initial[c.id] = false;
+    for (const cid of u.company_ids || []) initial[cid] = true;
+    setCompanySelection(initial);
+  };
+
+  const saveCompanyAssignments = async () => {
+    if (!editingCompaniesFor) return;
+    setErrorMsg(null);
+
+    const companyIds = Object.entries(companySelection)
+      .filter(([, v]) => v)
+      .map(([k]) => k);
+
+    try {
+      const resp = await fetch("/api/admin/set-user-companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: editingCompaniesFor.id, companyIds }),
+      });
+      const json = await resp.json().catch(() => ({}));
+      if (!resp.ok || !json?.ok) throw new Error(json?.error || "Unable to update company assignments.");
+
+      // reflect in UI
+      setRows((prev) =>
+        prev.map((r) => (r.id === editingCompaniesFor.id ? { ...r, company_ids: companyIds } : r))
+      );
+      setEditingCompaniesFor(null);
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Unable to update company assignments.");
     }
   };
 
@@ -146,6 +201,7 @@ export default function AdminUsersPage() {
                 <th className="px-4 py-3 text-left font-medium">Email</th>
                 <th className="px-4 py-3 text-left font-medium">Display name</th>
                 <th className="px-4 py-3 text-left font-medium">Role</th>
+                <th className="px-4 py-3 text-left font-medium">Companies</th>
                 <th className="px-4 py-3 text-left font-medium">Active</th>
               </tr>
             </thead>
@@ -174,6 +230,28 @@ export default function AdminUsersPage() {
                     </select>
                   </td>
                   <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {(r.company_ids || []).slice(0, 3).map((cid) => {
+                        const name = companies.find((c) => c.id === cid)?.name || cid;
+                        return (
+                          <span key={cid} className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
+                            {name}
+                          </span>
+                        );
+                      })}
+                      {(r.company_ids || []).length > 3 && (
+                        <span className="text-xs text-slate-500">+{(r.company_ids || []).length - 3} more</span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openCompanyEditor(r)}
+                      className="mt-2 text-xs text-blue-700 hover:text-blue-900"
+                    >
+                      Edit companies
+                    </button>
+                  </td>
+                  <td className="px-4 py-3">
                     <input
                       type="checkbox"
                       checked={!!r.is_active}
@@ -185,6 +263,59 @@ export default function AdminUsersPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Company assignment modal */}
+        {editingCompaniesFor && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl">
+              <div className="border-b px-5 py-4">
+                <div className="text-sm font-semibold text-slate-900">Assign companies</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {editingCompaniesFor.email}
+                </div>
+              </div>
+              <div className="max-h-[60vh] overflow-y-auto px-5 py-4">
+                {companies.length === 0 ? (
+                  <div className="text-sm text-slate-600">No companies found.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {companies.map((c) => (
+                      <label key={c.id} className="flex items-center gap-3 rounded-lg border px-3 py-2 hover:bg-slate-50">
+                        <input
+                          type="checkbox"
+                          checked={!!companySelection[c.id]}
+                          onChange={(e) =>
+                            setCompanySelection((prev) => ({ ...prev, [c.id]: e.target.checked }))
+                          }
+                        />
+                        <div className="min-w-0">
+                          <div className="text-sm text-slate-900 truncate">{c.name}</div>
+                          <div className="text-[11px] text-slate-500 truncate">{c.id}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="border-t px-5 py-4 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingCompaniesFor(null)}
+                  className="rounded-lg border bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveCompanyAssignments()}
+                  className="rounded-lg bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800"
+                >
+                  Save companies
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="mt-4 text-xs text-slate-500">
           {saveStatus === "saved" ? "Saved." : hasChanges ? "Edit fields and click Save." : ""}
