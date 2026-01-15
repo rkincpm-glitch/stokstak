@@ -760,7 +760,20 @@ useEffect(() => {
 
       {activeTab === "invoices" ? (
         <div className="rounded-2xl border bg-white overflow-x-auto overflow-y-visible">
-          <div className="px-4 py-3 border-b font-semibold text-slate-900">Invoices</div>
+          <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
+            <div className="font-semibold text-slate-900">Invoices</div>
+            <button
+              type="button"
+              onClick={() => {
+                setErr(null);
+                setShowInv(true);
+              }}
+              className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+            >
+              <Plus className="h-4 w-4" />
+              Add invoice
+            </button>
+          </div>
           <table className="w-full text-sm">
             <thead className="text-xs text-slate-500 bg-slate-50">
               <tr className="text-left">
@@ -843,7 +856,20 @@ useEffect(() => {
         </div>
       ) : (
         <div className="rounded-2xl border bg-white overflow-x-auto overflow-y-visible">
-          <div className="px-4 py-3 border-b font-semibold text-slate-900">Payments</div>
+          <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
+            <div className="font-semibold text-slate-900">Payments</div>
+            <button
+              type="button"
+              onClick={() => {
+                setErr(null);
+                setShowPay(true);
+              }}
+              className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+            >
+              <Plus className="h-4 w-4" />
+              Add payment
+            </button>
+          </div>
           <table className="w-full text-sm">
             <thead className="text-xs text-slate-500 bg-slate-50">
               <tr className="text-left">
