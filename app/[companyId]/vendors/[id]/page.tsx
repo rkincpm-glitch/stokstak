@@ -350,9 +350,14 @@ useEffect(() => {
 
     const isSuper = isSuperVendorName((v as any)?.name);
 
+    // NOTE: Some schemas have more than one FK between vendor_invoices and vendors (e.g. vendor_id and reference),
+    // which makes PostgREST embedding ambiguous unless we disambiguate the relationship.
+    // We only need the originating vendor name (via vendor_id), so we explicitly select through that FK.
     const invQuery = supabase
       .from("vendor_invoices")
-      .select("id, vendor_id, invoice_number, invoice_date, due_date, amount, status, description, attachment_path, reference, vendors(name)")
+      .select(
+        "id, vendor_id, invoice_number, invoice_date, due_date, amount, status, description, attachment_path, reference, vendor:vendors!vendor_invoices_vendor_id_fkey(name)"
+      )
       .eq("company_id", companyId)
       .order("invoice_date", { ascending: false });
 
@@ -384,7 +389,7 @@ useEffect(() => {
       ...r,
       reference: r.reference ?? null,
       vendor_id: r.vendor_id ?? undefined,
-      vendor_name: r.vendors?.name ?? null,
+      vendor_name: r.vendor?.name ?? null,
     })) as Invoice[]);
 
     // Build a lookup so we can display invoice_number for each payment without embedding.
