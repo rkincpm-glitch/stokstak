@@ -9,8 +9,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { exportToExcel, exportToPdf } from "@/lib/reportExport";
 import { ArrowLeft, Plus, DollarSign, Paperclip, Trash2, Pencil, FileText } from "lucide-react";
 
-const SUPER_VENDOR_NAME = "Super Vendor";
-const isSuperVendorName = (name: string | null | undefined) => (name || "").trim().toLowerCase() === SUPER_VENDOR_NAME.toLowerCase();
+// Super vendors are configured per-company in public.vendor_super_vendors.
 
 type Vendor = { id: string; name: string; contact_name: string | null; phone: string | null; email: string | null; };
 type Invoice = {
@@ -71,6 +70,8 @@ export default function VendorDetailPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [superVendors, setSuperVendors] = useState<Array<{ id: string; name: string }>>([]);
+
+  const isCurrentSuperVendor = useMemo(() => superVendors.some((sv) => sv.id === vendorId), [superVendors, vendorId]);
 
 
   // new invoice
@@ -340,15 +341,31 @@ useEffect(() => {
     }
 
 
-    // Load Super Vendor(s) for reference dropdown / mapping
-    const { data: svRows } = await supabase
-      .from("vendors")
-      .select("id, name")
-      .eq("company_id", companyId)
-      .eq("name", SUPER_VENDOR_NAME);
-    setSuperVendors(((svRows || []) as any[]).map((r) => ({ id: String(r.id), name: String(r.name) })));
+    // Load super vendors for reference dropdown / mapping (supports multiple super vendors).
+    const { data: svMapRows, error: svMapErr } = await supabase
+      .from("vendor_super_vendors")
+      .select("vendor_id")
+      .eq("company_id", companyId);
+    if (svMapErr) {
+      // Non-blocking: if table/policies are missing, treat as no super vendors.
+      setSuperVendors([]);
+    } else {
+      const svIds = (svMapRows || []).map((r: any) => String(r.vendor_id)).filter(Boolean);
+      if (svIds.length === 0) {
+        setSuperVendors([]);
+      } else {
+        const { data: svVendRows, error: svVendErr } = await supabase
+          .from("vendors")
+          .select("id, name")
+          .eq("company_id", companyId)
+          .in("id", svIds)
+          .order("name", { ascending: true });
+        if (svVendErr) setSuperVendors([]);
+        else setSuperVendors(((svVendRows || []) as any[]).map((r) => ({ id: String(r.id), name: String(r.name) })));
+      }
+    }
 
-    const isSuper = isSuperVendorName((v as any)?.name);
+    const isSuper = (svMapRows || []).some((r: any) => String(r.vendor_id) === vendorId);
 
     // Base invoice query (no "reference" column assumed in schema).
     const baseInvQuery = supabase
@@ -923,7 +940,7 @@ useEffect(() => {
             <thead className="text-xs text-slate-500 bg-slate-50">
               <tr className="text-left">
                 <th className="px-4 py-3">Invoice</th>
-                {isSuperVendorName(vendor?.name) ? <th className="px-4 py-3">Vendor</th> : null}
+                {isCurrentSuperVendor ? <th className="px-4 py-3">Vendor</th> : null}
                 <th className="px-4 py-3">Reference</th>
                 <th className="px-4 py-3">Date</th>
                 <th className="px-4 py-3">Due</th>
@@ -937,7 +954,7 @@ useEffect(() => {
               {invoices.map((i) => (
                 <tr key={i.id} className="border-t">
                   <td className="px-4 py-3 font-medium text-slate-900">{i.invoice_number}</td>
-                  {isSuperVendorName(vendor?.name) ? <td className="px-4 py-3">{i.vendor_name || "—"}</td> : null}
+                  {isCurrentSuperVendor ? <td className="px-4 py-3">{i.vendor_name || "—"}</td> : null}
                   <td className="px-4 py-3">{superVendors.find((sv) => sv.id === i.super_vendor_id)?.name || (i.super_vendor_id ? "(Unknown)" : "—")}</td>
                   <td className="px-4 py-3">{i.invoice_date || "—"}</td>
                   <td className="px-4 py-3">{i.due_date || "—"}</td>
@@ -988,7 +1005,7 @@ useEffect(() => {
               ))}
               {invoices.length === 0 && (
                 <tr>
-                  <td className="px-4 py-4 text-slate-500" colSpan={isSuperVendorName(vendor?.name) ? 9 : 8}>
+                  <td className="px-4 py-4 text-slate-500" colSpan={isCurrentSuperVendor ? 9 : 8}>
                     No invoices yet.
                   </td>
                 </tr>
@@ -1081,7 +1098,7 @@ useEffect(() => {
               ))}
               {payments.length === 0 && (
                 <tr>
-                  <td className="px-4 py-4 text-slate-500" colSpan={isSuperVendorName(vendor?.name) ? 9 : 8}>
+                  <td className="px-4 py-4 text-slate-500" colSpan={isCurrentSuperVendor ? 9 : 8}>
                     No payments yet.
                   </td>
                 </tr>
@@ -1695,7 +1712,7 @@ useEffect(() => {
                 <tbody className="divide-y">
                   {statementRows.length === 0 ? (
                     <tr>
-                      <td colSpan={isSuperVendorName(vendor?.name) ? 9 : 8} className="px-4 py-6 text-center text-slate-500">
+                      <td colSpan={isCurrentSuperVendor ? 9 : 8} className="px-4 py-6 text-center text-slate-500">
                         No transactions found for the selected date range.
                       </td>
                     </tr>

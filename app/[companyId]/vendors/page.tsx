@@ -19,8 +19,8 @@ type Vendor = {
 };
 
 
-const SUPER_VENDOR_NAME = "Super Vendor";
-const isSuperVendor = (v: { name: string }) => (v.name || "").trim().toLowerCase() == SUPER_VENDOR_NAME.toLowerCase();
+// Super vendors are stored in public.vendor_super_vendors (vendor_id list per company).
+// This allows multiple super vendors without relying on vendor name conventions.
 export default function VendorsPage() {
   const params = useParams<{ companyId: string }>();
   const companyId = params.companyId;
@@ -31,6 +31,7 @@ export default function VendorsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [q, setQ] = useState("");
+  const [superVendorIds, setSuperVendorIds] = useState<Set<string>>(new Set());
 
   // create vendor
   const [showNew, setShowNew] = useState(false);
@@ -38,6 +39,7 @@ export default function VendorsPage() {
   const [contact, setContact] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [newIsSuperVendor, setNewIsSuperVendor] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -60,6 +62,18 @@ export default function VendorsPage() {
       setVendors([]);
     } else {
       const base = (data || []) as Vendor[];
+
+      // Load super vendor ids for this company.
+      const { data: svRows, error: svErr } = await supabase
+        .from("vendor_super_vendors")
+        .select("vendor_id")
+        .eq("company_id", companyId);
+      if (!svErr) {
+        setSuperVendorIds(new Set((svRows || []).map((r: any) => String(r.vendor_id))));
+      } else {
+        // Non-blocking: table may not exist yet.
+        setSuperVendorIds(new Set());
+      }
 
       // Compute outstanding balance per vendor (invoice-allocated).
       // Outstanding = sum(invoices.amount) - sum(payments.amount where payments.invoice_id is set)
@@ -120,13 +134,12 @@ export default function VendorsPage() {
     return vendors.filter((v) => (`${v.name} ${v.contact_name ?? ""} ${v.email ?? ""}`.toLowerCase().includes(s)));
   }, [vendors, q]);
 
-  const superVendor = useMemo(() => vendors.find((v) => isSuperVendor(v)) || null, [vendors]);
-  const superVendorExists = !!superVendor;
-
-
   const totalOutstandingAllVendors = useMemo(() => {
-    return vendors.reduce((sum, v) => sum + (Number(v.outstanding ?? 0) || 0), 0);
-  }, [vendors]);
+    // Exclude super vendors from the "all vendors" rollup to avoid double-counting...
+    return vendors
+      .filter((v) => !superVendorIds.has(v.id))
+      .reduce((sum, v) => sum + (Number(v.outstanding ?? 0) || 0), 0);
+  }, [vendors, superVendorIds]);
 
   const createVendor = async () => {
     setErr(null);
@@ -135,17 +148,32 @@ export default function VendorsPage() {
       return;
     }
 
-    const { error } = await supabase.from("vendors").insert({
+    const { data: created, error } = await supabase
+      .from("vendors")
+      .insert({
       company_id: companyId,
       name: name.trim(),
       contact_name: contact.trim() || null,
       phone: phone.trim() || null,
       email: email.trim() || null,
-    });
+      })
+      .select("id")
+      .single();
 
     if (error) {
       setErr(error.message);
       return;
+    }
+
+    if (!error && newIsSuperVendor && created?.id) {
+      const { error: mapErr } = await supabase.from("vendor_super_vendors").insert({
+        company_id: companyId,
+        vendor_id: created.id,
+      });
+      if (mapErr) {
+        // Non-blocking: vendor was created. Show error but keep flow.
+        setErr(mapErr.message);
+      }
     }
 
     setShowNew(false);
@@ -153,32 +181,8 @@ export default function VendorsPage() {
     setContact("");
     setPhone("");
     setEmail("");
+    setNewIsSuperVendor(false);
     await load();
-  };
-
-
-  const createSuperVendor = async () => {
-    setErr(null);
-    const existing = vendors.find((v) => isSuperVendor(v));
-    if (existing) {
-      router.push(`/${companyId}/vendors/${existing.id}`);
-      return;
-    }
-    const { error } = await supabase.from("vendors").insert({
-      company_id: companyId,
-      name: SUPER_VENDOR_NAME,
-      contact_name: null,
-      phone: null,
-      email: null,
-      is_active: true,
-    });
-    if (error) {
-      setErr(error.message);
-      return;
-    }
-    await load();
-    const created = vendors.find((v) => isSuperVendor(v));
-    if (created) router.push(`/${companyId}/vendors/${created.id}`);
   };
 
   if (loading) return <div className="text-slate-500">Loading vendors…</div>;
@@ -192,14 +196,20 @@ export default function VendorsPage() {
         </div>
 
         <button
-          onClick={() => void createSuperVendor()}
+          onClick={() => {
+            setShowNew(true);
+            setNewIsSuperVendor(true);
+          }}
           className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border bg-white text-slate-900 text-sm font-medium hover:bg-slate-50"
         >
-          Create Super Vendor
+          New super vendor
         </button>
 
         <button
-          onClick={() => setShowNew(true)}
+          onClick={() => {
+            setShowNew(true);
+            setNewIsSuperVendor(false);
+          }}
           className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
         >
           <Plus className="h-4 w-4" />
@@ -271,6 +281,15 @@ export default function VendorsPage() {
           <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-xl p-4">
             <div className="text-lg font-semibold text-slate-900">New vendor</div>
             <div className="grid grid-cols-1 gap-3 mt-3">
+              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={newIsSuperVendor}
+                  onChange={(e) => setNewIsSuperVendor(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                Mark as super vendor
+              </label>
               <div>
                 <label className="block text-xs text-slate-600 mb-1">Vendor name</label>
                 <input value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900" />
