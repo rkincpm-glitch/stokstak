@@ -22,7 +22,7 @@ type Invoice = {
   status: string;
   description: string | null;
   attachment_path: string | null;
-  reference: string | null;
+  super_vendor_id?: string | null;
   vendor_id?: string;
   vendor_name?: string | null;
 };
@@ -350,20 +350,43 @@ useEffect(() => {
 
     const isSuper = isSuperVendorName((v as any)?.name);
 
-    // NOTE: Some schemas have more than one FK between vendor_invoices and vendors (e.g. vendor_id and reference),
-    // which makes PostgREST embedding ambiguous unless we disambiguate the relationship.
-    // We only need the originating vendor name (via vendor_id), so we explicitly select through that FK.
-    const invQuery = supabase
+    // Base invoice query (no "reference" column assumed in schema).
+    const baseInvQuery = supabase
       .from("vendor_invoices")
       .select(
-        "id, vendor_id, invoice_number, invoice_date, due_date, amount, status, description, attachment_path, reference, vendor:vendors!vendor_invoices_vendor_id_fkey(name)"
+        "id, vendor_id, invoice_number, invoice_date, due_date, amount, status, description, attachment_path, vendor:vendors(name)"
       )
       .eq("company_id", companyId)
       .order("invoice_date", { ascending: false });
 
-    const { data: inv, error: iErr } = isSuper
-      ? await invQuery.or(`vendor_id.eq.${vendorId},reference.eq.${vendorId}`)
-      : await invQuery.eq("vendor_id", vendorId);
+    // If viewing Super Vendor, include invoices mapped to it via vendor_invoice_supervendor.
+    let inv: any[] | null = null;
+    let iErr: any = null;
+    if (isSuper) {
+      const { data: mapped, error: mapErr } = await supabase
+        .from("vendor_invoice_supervendor")
+        .select("invoice_id")
+        .eq("company_id", companyId)
+        .eq("super_vendor_id", vendorId);
+      if (mapErr) {
+        iErr = mapErr;
+      } else {
+        const ids = (mapped || []).map((m: any) => String(m.invoice_id)).filter(Boolean);
+        if (ids.length > 0) {
+          const { data: invRows, error } = await baseInvQuery.or(`vendor_id.eq.${vendorId},id.in.(${ids.join(",")})`);
+          inv = (invRows || []) as any[];
+          iErr = error;
+        } else {
+          const { data: invRows, error } = await baseInvQuery.eq("vendor_id", vendorId);
+          inv = (invRows || []) as any[];
+          iErr = error;
+        }
+      }
+    } else {
+      const { data: invRows, error } = await baseInvQuery.eq("vendor_id", vendorId);
+      inv = (invRows || []) as any[];
+      iErr = error;
+    }
 
     const { data: pay, error: pErr } = await supabase
       .from("vendor_payments")
@@ -385,11 +408,33 @@ useEffect(() => {
       setEditVendorEmail(_v.email ?? "");
     }
     const invRows = (inv || []) as any[];
+
+    // Attach Super Vendor mapping (if any) to invoices so UI can show "Reference".
+    const invIds = invRows.map((r) => String(r.id)).filter(Boolean);
+    const superByInvoiceId = new Map<string, string>();
+    if (invIds.length > 0) {
+      const { data: maps } = await supabase
+        .from("vendor_invoice_supervendor")
+        .select("invoice_id, super_vendor_id")
+        .eq("company_id", companyId)
+        .in("invoice_id", invIds);
+      for (const m of (maps || []) as any[]) {
+        if (m?.invoice_id && m?.super_vendor_id) superByInvoiceId.set(String(m.invoice_id), String(m.super_vendor_id));
+      }
+    }
+
     setInvoices(invRows.map((r) => ({
-      ...r,
-      reference: r.reference ?? null,
+      id: String(r.id),
+      invoice_number: r.invoice_number ?? "",
+      invoice_date: r.invoice_date ?? null,
+      due_date: r.due_date ?? null,
+      amount: r.amount ?? 0,
+      status: r.status ?? "",
+      description: r.description ?? null,
+      attachment_path: r.attachment_path ?? null,
       vendor_id: r.vendor_id ?? undefined,
       vendor_name: r.vendor?.name ?? null,
+      super_vendor_id: superByInvoiceId.get(String(r.id)) ?? null,
     })) as Invoice[]);
 
     // Build a lookup so we can display invoice_number for each payment without embedding.
@@ -508,19 +553,37 @@ useEffect(() => {
       }
     }
 
-    const { error } = await supabase.from("vendor_invoices").insert({
+    const { data: created, error } = await supabase
+      .from("vendor_invoices")
+      .insert({
       company_id: companyId,
       vendor_id: vendorId,
       invoice_number: invNo.trim(),
-      reference: invRef || null,
       invoice_date: invDate || null,
       due_date: dueDate || null,
       amount: invAmt,
       description: invDesc || null,
       attachment_path: attachmentPath,
-    });
+      })
+      .select("id")
+      .maybeSingle();
 
     if (error) return setErr(error.message);
+
+    // Optional mapping to Super Vendor
+    if (invRef && created?.id) {
+      const { error: mapErr } = await supabase
+        .from("vendor_invoice_supervendor")
+        .upsert(
+          {
+            company_id: companyId,
+            invoice_id: String(created.id),
+            super_vendor_id: invRef,
+          },
+          { onConflict: "invoice_id" }
+        );
+      if (mapErr) return setErr(mapErr.message);
+    }
 
     setShowInv(false);
     setInvNo("");
@@ -537,7 +600,7 @@ useEffect(() => {
     setErr(null);
     setEditInv(inv);
     setEditInvNo(inv.invoice_number || "");
-    setEditInvRef(inv.reference || "");
+    setEditInvRef(inv.super_vendor_id || "");
     setEditInvDate(inv.invoice_date || "");
     setEditDueDate(inv.due_date || "");
     setEditInvAmt(Number(inv.amount || 0));
@@ -573,7 +636,6 @@ useEffect(() => {
       .from("vendor_invoices")
       .update({
         invoice_number: editInvNo.trim(),
-      reference: editInvRef || null,
         invoice_date: editInvDate || null,
         due_date: editDueDate || null,
         amount: editInvAmt,
@@ -585,6 +647,28 @@ useEffect(() => {
       .eq("id", editInv.id);
 
     if (error) return setErr(error.message);
+
+    // Update Super Vendor mapping (upsert or delete)
+    if (editInvRef) {
+      const { error: mapErr } = await supabase
+        .from("vendor_invoice_supervendor")
+        .upsert(
+          {
+            company_id: companyId,
+            invoice_id: editInv.id,
+            super_vendor_id: editInvRef,
+          },
+          { onConflict: "invoice_id" }
+        );
+      if (mapErr) return setErr(mapErr.message);
+    } else {
+      // Remove mapping if cleared
+      await supabase
+        .from("vendor_invoice_supervendor")
+        .delete()
+        .eq("company_id", companyId)
+        .eq("invoice_id", editInv.id);
+    }
     setEditInv(null);
     await load();
   };
@@ -835,7 +919,7 @@ useEffect(() => {
                 <tr key={i.id} className="border-t">
                   <td className="px-4 py-3 font-medium text-slate-900">{i.invoice_number}</td>
                   {isSuperVendorName(vendor?.name) ? <td className="px-4 py-3">{i.vendor_name || "—"}</td> : null}
-                  <td className="px-4 py-3">{superVendors.find((sv) => sv.id === i.reference)?.name || (i.reference ? "(Unknown)" : "—")}</td>
+                  <td className="px-4 py-3">{superVendors.find((sv) => sv.id === i.super_vendor_id)?.name || (i.super_vendor_id ? "(Unknown)" : "—")}</td>
                   <td className="px-4 py-3">{i.invoice_date || "—"}</td>
                   <td className="px-4 py-3">{i.due_date || "—"}</td>
                   <td className="px-4 py-3 text-right">{Number(i.amount).toFixed(2)}</td>
