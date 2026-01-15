@@ -354,7 +354,10 @@ useEffect(() => {
     const baseInvQuery = supabase
       .from("vendor_invoices")
       .select(
-        "id, vendor_id, invoice_number, invoice_date, due_date, amount, status, description, attachment_path, vendor:vendors(name)"
+        // IMPORTANT: Avoid embedding vendors here. Some schemas have multiple FKs between
+        // vendor_invoices and vendors (e.g., vendor_id plus other vendor-like columns), which
+        // makes PostgREST embedding ambiguous.
+        "id, vendor_id, invoice_number, invoice_date, due_date, amount, status, description, attachment_path"
       )
       .eq("company_id", companyId)
       .order("invoice_date", { ascending: false });
@@ -409,6 +412,22 @@ useEffect(() => {
     }
     const invRows = (inv || []) as any[];
 
+    // Resolve vendor names for invoice rows without using PostgREST embeds (avoids ambiguous relationships).
+    const vendorNameById = new Map<string, string>();
+    const invoiceVendorIds = Array.from(
+      new Set(invRows.map((r) => (r?.vendor_id ? String(r.vendor_id) : null)).filter(Boolean) as string[])
+    );
+    if (invoiceVendorIds.length > 0) {
+      const { data: vnames } = await supabase
+        .from("vendors")
+        .select("id, name")
+        .eq("company_id", companyId)
+        .in("id", invoiceVendorIds);
+      for (const row of (vnames || []) as any[]) {
+        if (row?.id) vendorNameById.set(String(row.id), String(row.name ?? ""));
+      }
+    }
+
     // Attach Super Vendor mapping (if any) to invoices so UI can show "Reference".
     const invIds = invRows.map((r) => String(r.id)).filter(Boolean);
     const superByInvoiceId = new Map<string, string>();
@@ -433,7 +452,7 @@ useEffect(() => {
       description: r.description ?? null,
       attachment_path: r.attachment_path ?? null,
       vendor_id: r.vendor_id ?? undefined,
-      vendor_name: r.vendor?.name ?? null,
+      vendor_name: (r?.vendor_id ? (vendorNameById.get(String(r.vendor_id)) ?? null) : null),
       super_vendor_id: superByInvoiceId.get(String(r.id)) ?? null,
     })) as Invoice[]);
 
