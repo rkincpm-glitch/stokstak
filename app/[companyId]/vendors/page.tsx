@@ -18,6 +18,9 @@ type Vendor = {
   outstanding?: number;
 };
 
+
+const SUPER_VENDOR_NAME = "Super Vendor";
+const isSuperVendor = (v: { name: string }) => (v.name || "").trim().toLowerCase() == SUPER_VENDOR_NAME.toLowerCase();
 export default function VendorsPage() {
   const params = useParams<{ companyId: string }>();
   const companyId = params.companyId;
@@ -117,6 +120,10 @@ export default function VendorsPage() {
     return vendors.filter((v) => (`${v.name} ${v.contact_name ?? ""} ${v.email ?? ""}`.toLowerCase().includes(s)));
   }, [vendors, q]);
 
+  const superVendor = useMemo(() => vendors.find((v) => isSuperVendor(v)) || null, [vendors]);
+  const superVendorExists = !!superVendor;
+
+
   const totalOutstandingAllVendors = useMemo(() => {
     return vendors.reduce((sum, v) => sum + (Number(v.outstanding ?? 0) || 0), 0);
   }, [vendors]);
@@ -149,6 +156,31 @@ export default function VendorsPage() {
     await load();
   };
 
+
+  const createSuperVendor = async () => {
+    setErr(null);
+    const existing = vendors.find((v) => isSuperVendor(v));
+    if (existing) {
+      router.push(`/${companyId}/vendors/${existing.id}`);
+      return;
+    }
+    const { error } = await supabase.from("vendors").insert({
+      company_id: companyId,
+      name: SUPER_VENDOR_NAME,
+      contact_name: null,
+      phone: null,
+      email: null,
+      is_active: true,
+    });
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+    await load();
+    const created = vendors.find((v) => isSuperVendor(v));
+    if (created) router.push(`/${companyId}/vendors/${created.id}`);
+  };
+
   if (loading) return <div className="text-slate-500">Loading vendors…</div>;
 
   return (
@@ -158,6 +190,13 @@ export default function VendorsPage() {
           <h1 className="text-xl font-semibold text-slate-900">Vendors</h1>
           <div className="text-sm text-slate-600 mt-1">Subcontractors and suppliers by company.</div>
         </div>
+
+        <button
+          onClick={() => void createSuperVendor()}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border bg-white text-slate-900 text-sm font-medium hover:bg-slate-50"
+        >
+          Create Super Vendor
+        </button>
 
         <button
           onClick={() => setShowNew(true)}

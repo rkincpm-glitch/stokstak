@@ -2,11 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { exportToExcel, exportToPdf } from "@/lib/reportExport";
 import { ArrowLeft, Plus, DollarSign, Paperclip, Trash2, Pencil, FileText } from "lucide-react";
+
+const SUPER_VENDOR_NAME = "Super Vendor";
+const isSuperVendorName = (name: string | null | undefined) => (name || "").trim().toLowerCase() === SUPER_VENDOR_NAME.toLowerCase();
 
 type Vendor = { id: string; name: string; contact_name: string | null; phone: string | null; email: string | null; };
 type Invoice = {
@@ -18,6 +22,9 @@ type Invoice = {
   status: string;
   description: string | null;
   attachment_path: string | null;
+  reference: string | null;
+  vendor_id?: string;
+  vendor_name?: string | null;
 };
 type PaymentRowFromDb = {
   id: string;
@@ -63,10 +70,14 @@ export default function VendorDetailPage() {
   const [vendor, setVendor] = useState<Vendor | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [superVendors, setSuperVendors] = useState<Array<{ id: string; name: string }>>([]);
+
 
   // new invoice
   const [showInv, setShowInv] = useState(false);
   const [invNo, setInvNo] = useState("");
+  const [invRef, setInvRef] = useState(""); // super vendor id (optional)
+
   const [invDate, setInvDate] = useState<string>("");
   const [dueDate, setDueDate] = useState<string>("");
   const [invAmt, setInvAmt] = useState<number>(0);
@@ -76,6 +87,8 @@ export default function VendorDetailPage() {
   // edit invoice
   const [editInv, setEditInv] = useState<Invoice | null>(null);
   const [editInvNo, setEditInvNo] = useState("");
+  const [editInvRef, setEditInvRef] = useState("");
+
   const [editInvDate, setEditInvDate] = useState<string>("");
   const [editDueDate, setEditDueDate] = useState<string>("");
   const [editInvAmt, setEditInvAmt] = useState<number>(0);
@@ -326,12 +339,26 @@ useEffect(() => {
       return;
     }
 
-    const { data: inv, error: iErr } = await supabase
-      .from("vendor_invoices")
-      .select("id, invoice_number, invoice_date, due_date, amount, status, description, attachment_path")
+
+    // Load Super Vendor(s) for reference dropdown / mapping
+    const { data: svRows } = await supabase
+      .from("vendors")
+      .select("id, name")
       .eq("company_id", companyId)
-      .eq("vendor_id", vendorId)
+      .eq("name", SUPER_VENDOR_NAME);
+    setSuperVendors(((svRows || []) as any[]).map((r) => ({ id: String(r.id), name: String(r.name) })));
+
+    const isSuper = isSuperVendorName((v as any)?.name);
+
+    const invQuery = supabase
+      .from("vendor_invoices")
+      .select("id, vendor_id, invoice_number, invoice_date, due_date, amount, status, description, attachment_path, reference, vendors(name)")
+      .eq("company_id", companyId)
       .order("invoice_date", { ascending: false });
+
+    const { data: inv, error: iErr } = isSuper
+      ? await invQuery.or(`vendor_id.eq.${vendorId},reference.eq.${vendorId}`)
+      : await invQuery.eq("vendor_id", vendorId);
 
     const { data: pay, error: pErr } = await supabase
       .from("vendor_payments")
@@ -352,7 +379,13 @@ useEffect(() => {
       setEditVendorPhone(_v.phone ?? "");
       setEditVendorEmail(_v.email ?? "");
     }
-    setInvoices((inv || []) as Invoice[]);
+    const invRows = (inv || []) as any[];
+    setInvoices(invRows.map((r) => ({
+      ...r,
+      reference: r.reference ?? null,
+      vendor_id: r.vendor_id ?? undefined,
+      vendor_name: r.vendors?.name ?? null,
+    })) as Invoice[]);
 
     // Build a lookup so we can display invoice_number for each payment without embedding.
     const invoiceNumberById = new Map<string, string | null>();
@@ -474,6 +507,7 @@ useEffect(() => {
       company_id: companyId,
       vendor_id: vendorId,
       invoice_number: invNo.trim(),
+      reference: invRef || null,
       invoice_date: invDate || null,
       due_date: dueDate || null,
       amount: invAmt,
@@ -485,6 +519,7 @@ useEffect(() => {
 
     setShowInv(false);
     setInvNo("");
+    setInvRef("");
     setInvDate("");
     setDueDate("");
     setInvAmt(0);
@@ -497,6 +532,7 @@ useEffect(() => {
     setErr(null);
     setEditInv(inv);
     setEditInvNo(inv.invoice_number || "");
+    setEditInvRef(inv.reference || "");
     setEditInvDate(inv.invoice_date || "");
     setEditDueDate(inv.due_date || "");
     setEditInvAmt(Number(inv.amount || 0));
@@ -532,6 +568,7 @@ useEffect(() => {
       .from("vendor_invoices")
       .update({
         invoice_number: editInvNo.trim(),
+      reference: editInvRef || null,
         invoice_date: editInvDate || null,
         due_date: editDueDate || null,
         amount: editInvAmt,
@@ -778,6 +815,8 @@ useEffect(() => {
             <thead className="text-xs text-slate-500 bg-slate-50">
               <tr className="text-left">
                 <th className="px-4 py-3">Invoice</th>
+                {isSuperVendorName(vendor?.name) ? <th className="px-4 py-3">Vendor</th> : null}
+                <th className="px-4 py-3">Reference</th>
                 <th className="px-4 py-3">Date</th>
                 <th className="px-4 py-3">Due</th>
                 <th className="px-4 py-3 text-right">Amount</th>
@@ -790,6 +829,8 @@ useEffect(() => {
               {invoices.map((i) => (
                 <tr key={i.id} className="border-t">
                   <td className="px-4 py-3 font-medium text-slate-900">{i.invoice_number}</td>
+                  {isSuperVendorName(vendor?.name) ? <td className="px-4 py-3">{i.vendor_name || "—"}</td> : null}
+                  <td className="px-4 py-3">{superVendors.find((sv) => sv.id === i.reference)?.name || (i.reference ? "(Unknown)" : "—")}</td>
                   <td className="px-4 py-3">{i.invoice_date || "—"}</td>
                   <td className="px-4 py-3">{i.due_date || "—"}</td>
                   <td className="px-4 py-3 text-right">{Number(i.amount).toFixed(2)}</td>
@@ -839,7 +880,7 @@ useEffect(() => {
               ))}
               {invoices.length === 0 && (
                 <tr>
-                  <td className="px-4 py-4 text-slate-500" colSpan={7}>
+                  <td className="px-4 py-4 text-slate-500" colSpan={isSuperVendorName(vendor?.name) ? 9 : 8}>
                     No invoices yet.
                   </td>
                 </tr>
@@ -932,7 +973,7 @@ useEffect(() => {
               ))}
               {payments.length === 0 && (
                 <tr>
-                  <td className="px-4 py-4 text-slate-500" colSpan={7}>
+                  <td className="px-4 py-4 text-slate-500" colSpan={isSuperVendorName(vendor?.name) ? 9 : 8}>
                     No payments yet.
                   </td>
                 </tr>
@@ -1061,6 +1102,18 @@ useEffect(() => {
                 <label className="block text-xs text-slate-600 mb-1">Invoice number</label>
                 <input value={invNo} onChange={(e) => setInvNo(e.target.value)} className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900" />
               </div>
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">Reference (Super Vendor)</label>
+                <select value={invRef} onChange={(e) => setInvRef(e.target.value)} className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900">
+                  <option value="">None</option>
+                  {superVendors.map((sv) => (
+                    <option key={sv.id} value={sv.id}>
+                      {sv.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-slate-600 mb-1">Invoice date</label>
@@ -1136,6 +1189,18 @@ useEffect(() => {
                 <label className="block text-xs text-slate-600 mb-1">Invoice number</label>
                 <input value={editInvNo} onChange={(e) => setEditInvNo(e.target.value)} className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900" />
               </div>
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">Reference (Super Vendor)</label>
+                <select value={editInvRef} onChange={(e) => setEditInvRef(e.target.value)} className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900">
+                  <option value="">None</option>
+                  {superVendors.map((sv) => (
+                    <option key={sv.id} value={sv.id}>
+                      {sv.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-slate-600 mb-1">Invoice date</label>
@@ -1522,7 +1587,7 @@ useEffect(() => {
                 <tbody className="divide-y">
                   {statementRows.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
+                      <td colSpan={isSuperVendorName(vendor?.name) ? 9 : 8} className="px-4 py-6 text-center text-slate-500">
                         No transactions found for the selected date range.
                       </td>
                     </tr>
