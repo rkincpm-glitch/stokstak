@@ -86,7 +86,7 @@ export async function POST(req: Request) {
     }
 
     const currentIds = new Set((current || []).map((r: any) => String(r.company_id)).filter(Boolean));
-    const nextIds = new Set(companyIds);
+    const nextIds = new Set<string>(companyIds);
 
     // Remove memberships not in nextIds
     const removeIds: string[] = [];
