@@ -179,7 +179,7 @@ const [showStatement, setShowStatement] = useState(false);
     if (signed) {
       setPreviewByPath((prev) => ({ ...prev, [path]: signed }));
 
-      // Best-effort: capture Content-Type for better image detection (e.g., HEIC/HEIF camera uploads).
+      // Best-effort: Content-Type for better image detection (e.g., HEIC/HEIF camera uploads).
       // If CORS/HEAD is blocked, silently ignore and fall back to extension checks.
       if (!contentTypeByPath[path]) {
         void (async () => {
@@ -1232,7 +1232,6 @@ useEffect(() => {
                     <input
                       type="file"
                       accept="image/*"
-                      capture="environment"
                       onChange={(e) => setInvFile(e.target.files?.[0] || null)}
                       className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900"
                     />
@@ -1319,7 +1318,6 @@ useEffect(() => {
                     <input
                       type="file"
                       accept="image/*"
-                      capture="environment"
                       onChange={(e) => setEditInvFile(e.target.files?.[0] || null)}
                       className="w-full px-3 py-2 border rounded-lg bg-white text-slate-900"
                     />
@@ -1407,7 +1405,6 @@ useEffect(() => {
                   <input
                     type="file"
                     accept="image/*"
-                    capture="environment"
                     onChange={(e) => setPayFile(e.target.files?.[0] || null)}
                     className="block w-full text-sm text-slate-700 file:mr-4 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-100 file:text-slate-900 hover:file:bg-slate-200"
                   />
@@ -1514,7 +1511,6 @@ useEffect(() => {
                   <input
                     type="file"
                     accept="image/*"
-                    capture="environment"
                     onChange={(e) => setEditPayFile(e.target.files?.[0] || null)}
                     className="block w-full text-sm text-slate-700 file:mr-4 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-100 file:text-slate-900 hover:file:bg-slate-200"
                   />
