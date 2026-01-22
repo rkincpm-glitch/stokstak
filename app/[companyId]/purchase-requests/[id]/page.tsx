@@ -1,0 +1,1 @@
+export { default } from "@/app/purchase-requests/[id]/page";
