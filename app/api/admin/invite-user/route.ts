@@ -3,6 +3,15 @@ import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { rateLimit, requireSameOrigin } from "@/lib/security";
 
+function getClientIp(req: NextRequest): string {
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) return xff.split(",")[0].trim();
+  const xri = req.headers.get("x-real-ip");
+  if (xri) return xri.trim();
+  return "unknown";
+}
+
+
 const BodySchema = z.object({
   email: z.string().email(),
   company_id: z.string().min(1),
@@ -12,7 +21,7 @@ const BodySchema = z.object({
 export async function POST(req: NextRequest) {
   try {
     requireSameOrigin(req);
-    const rl = rateLimit(`invite:${req.ip ?? "unknown"}`, { capacity: 10, refillPerSecond: 0.2 });
+    const rl = rateLimit(`invite:${getClientIp(req)}`, { capacity: 10, refillPerSecond: 0.2 });
     if (!rl.ok) {
       return NextResponse.json(
         { error: "Too many requests" },
