@@ -39,10 +39,13 @@ export async function exportToPdf<T>(
   rows: T[],
   columns: ExportColumn<T>[]
 ) {
-  const [{ jsPDF }, _autoTable] = await Promise.all([
+  const [{ jsPDF }, autoTableMod] = await Promise.all([
     import("jspdf"),
     import("jspdf-autotable"),
   ]);
+
+  // jspdf-autotable v5 exports a function (default export) rather than augmenting jsPDF.
+  const autoTable: any = (autoTableMod as any).default ?? (autoTableMod as any);
 
   const doc = new jsPDF({ orientation: "landscape" });
   doc.setFontSize(14);
@@ -56,8 +59,7 @@ export async function exportToPdf<T>(
     })
   );
 
-  // @ts-expect-error - autotable augments jsPDF instance
-  doc.autoTable({
+  autoTable(doc, {
     startY: 22,
     head,
     body,
