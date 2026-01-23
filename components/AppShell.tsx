@@ -4,6 +4,7 @@ import { ReactNode, useState } from "react";
 import { Menu, X } from "lucide-react";
 import Sidebar, { AppRole } from "@/components/Sidebar";
 import ThemeToggle from "@/components/ThemeToggle";
+import SwitchUserButton from "@/components/SwitchUserButton";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -59,6 +60,7 @@ export default function AppShell({
 
             <div className="ml-auto flex items-center gap-2">
               <ThemeToggle />
+              <SwitchUserButton />
               {headerRight}
             </div>
           </header>

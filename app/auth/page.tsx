@@ -5,6 +5,13 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { Package } from "lucide-react";
 
+function clearActiveCompanyCookie() {
+  const isHttps = typeof window !== "undefined" && window.location?.protocol === "https:";
+  const secure = isHttps ? "; Secure" : "";
+  // Expire immediately
+  document.cookie = `stokstak_company_id=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+}
+
 export default function AuthPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -16,6 +23,11 @@ export default function AuthPage() {
     setLoading(true);
     
     try {
+      // Ensure we are starting from a clean session when switching users in the same browser.
+      // (A single browser cannot hold two simultaneous Supabase sessions for the same site.)
+      clearActiveCompanyCookie();
+      await supabase.auth.signOut().catch(() => null);
+
       if (isLogin) {
         const { error } = await supabase.auth.signInWithPassword({
           email,

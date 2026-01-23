@@ -15,12 +15,28 @@ function setActiveCompanyCookie(companyId: string) {
   document.cookie = `stokstak_company_id=${encodeURIComponent(companyId)}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
 }
 
+function clearActiveCompanyCookie() {
+  const isHttps = typeof window !== "undefined" && window.location?.protocol === "https:";
+  const secure = isHttps ? "; Secure" : "";
+  document.cookie = `stokstak_company_id=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+}
+
 export default function SelectCompanyPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [attemptedAutoFix, setAttemptedAutoFix] = useState(false);
+
+  const handleSignOut = async () => {
+    try {
+      clearActiveCompanyCookie();
+      const supabase = createSupabaseBrowserClient();
+      await supabase.auth.signOut().catch(() => null);
+    } finally {
+      router.replace("/auth");
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -117,6 +133,8 @@ if (serverCompanies && serverCompanies.length > 0) {
         .filter(Boolean);
 
       if (companyIds.length === 0) {
+        // Clear any stale company selection so the user isn't stuck in a loop.
+        clearActiveCompanyCookie();
         setCompanies([]);
         setLoading(false);
         return;
@@ -168,6 +186,22 @@ if (serverCompanies && serverCompanies.length > 0) {
         <div className="mt-2 text-slate-600">
           Ask your admin to add your user to a company in <span className="font-medium">company_users</span>.
         </div>
+        <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="rounded-lg border bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+          >
+            Sign out
+          </button>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-lg border bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+          >
+            Retry
+          </button>
+        </div>
       </div>
     );
   }, [companies.length, loading]);
@@ -179,6 +213,16 @@ if (serverCompanies && serverCompanies.length > 0) {
       <div className="max-w-3xl mx-auto px-4 py-10">
         <h1 className="text-xl font-semibold text-slate-900">Select Company</h1>
         <p className="text-sm text-slate-600 mt-2">Choose the workspace you want to access.</p>
+
+        <div className="mt-4 flex justify-end">
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="rounded-lg border bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+          >
+            Switch user
+          </button>
+        </div>
 
         {err && (
           <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
