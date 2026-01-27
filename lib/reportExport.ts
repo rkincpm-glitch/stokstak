@@ -77,8 +77,6 @@ export async function exportToPdf<T>(
     startY: 22,
     head,
     body,
-    styles: { fontSize: 9 },
-    headStyles: { fillColor: [241, 245, 249] },
     didParseCell: (data: any) => {
       const raw = data.cell?.raw;
       if (raw && typeof raw === "object" && "__imageDataUrl" in raw) {
