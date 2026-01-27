@@ -199,8 +199,18 @@ export default function LastVerifiedReport() {
       const img = new Image();
       img.crossOrigin = "anonymous";
       img.src = objectUrl;
-      // decode() is supported in modern browsers; falls back to load event.
-      if ("decode" in img) {        await (img as HTMLImageElement & { decode: () => Promise<void> }).decode();
+
+      // Use decode() when available; otherwise fall back to load events.
+      const decodeFn = (img as any).decode as undefined | (() => Promise<void>);
+      if (decodeFn) {
+        try {
+          await decodeFn.call(img);
+        } catch {
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = () => reject(new Error("Failed to load image"));
+          });
+        }
       } else {
         await new Promise<void>((resolve, reject) => {
           img.onload = () => resolve();
