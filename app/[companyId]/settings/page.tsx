@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { User, Tags, MapPin, Shapes, Users } from "lucide-react";
+import { User, Tags, MapPin, Shapes, Users, Building2 } from "lucide-react";
 import { useCompany } from "@/lib/useCompany";
 
 function Card({ title, desc, href, icon: Icon }: any) {
