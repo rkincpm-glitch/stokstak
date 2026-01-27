@@ -200,9 +200,7 @@ export default function LastVerifiedReport() {
       img.crossOrigin = "anonymous";
       img.src = objectUrl;
       // decode() is supported in modern browsers; falls back to load event.
-      if ("decode" in img) {
-        // @ts-expect-error - decode exists on HTMLImageElement in modern browsers
-        await img.decode();
+      if ("decode" in img) {        await (img as HTMLImageElement & { decode: () => Promise<void> }).decode();
       } else {
         await new Promise<void>((resolve, reject) => {
           img.onload = () => resolve();
