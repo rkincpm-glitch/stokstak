@@ -21,7 +21,8 @@ async function getAuthedUserId() {
   const { supabaseUrl, anonKey } = getEnv();
   if (!supabaseUrl || !anonKey) return null;
 
-  const cookieStore = cookies();
+  // Next.js 16+ may type cookies() as Promise<ReadonlyRequestCookies> in some builds.
+  const cookieStore = await cookies();
   const supabase = createServerClient(supabaseUrl, anonKey, {
     cookies: {
       getAll() {
