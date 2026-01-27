@@ -11,10 +11,10 @@ export default function CompanyShell({
   companyId: string;
   children: ReactNode;
 }) {
-  const { role } = useCompany();
+  const { role, companyName } = useCompany();
 
   return (
-    <AppShell companyId={companyId} role={role}>
+    <AppShell companyId={companyId} companyName={companyName} role={role}>
       {children}
     </AppShell>
   );

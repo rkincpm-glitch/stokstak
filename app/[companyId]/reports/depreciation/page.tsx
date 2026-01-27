@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { useCompany } from "@/lib/useCompany";
 import { ArrowLeft, Download } from "lucide-react";
 import { exportToExcel, exportToPdf } from "@/lib/reportExport";
 
@@ -24,6 +25,7 @@ function yearsBetween(a: Date, b: Date) {
 export default function DepreciationReport() {
   const params = useParams<{ companyId: string }>();
   const companyId = params.companyId;
+  const { companyName } = useCompany();
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);

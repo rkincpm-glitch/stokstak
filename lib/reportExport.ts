@@ -37,7 +37,8 @@ export async function exportToPdf<T>(
   filename: string,
   title: string,
   rows: T[],
-  columns: ExportColumn<T>[]
+  columns: ExportColumn<T>[],
+  options?: { companyName?: string }
 ) {
   const [{ jsPDF }, autoTableMod] = await Promise.all([
     import("jspdf"),
@@ -48,8 +49,16 @@ export async function exportToPdf<T>(
   const autoTable: any = (autoTableMod as any).default ?? (autoTableMod as any);
 
   const doc = new jsPDF({ orientation: "landscape" });
-  doc.setFontSize(14);
+  // Improve contrast/readability
+  doc.setTextColor(0, 0, 0);
+  doc.setFontSize(16);
   doc.text(title, 14, 16);
+  if (options?.companyName) {
+    doc.setFontSize(10);
+    doc.setTextColor(60, 60, 60);
+    doc.text(String(options.companyName), 14, 22);
+    doc.setTextColor(0, 0, 0);
+  }
 
   const head = [columns.map((c) => c.header)];
   const body = rows.map((r) =>
@@ -60,6 +69,11 @@ export async function exportToPdf<T>(
   );
 
   autoTable(doc, {
+    styles: { fontSize: 10, textColor: [0, 0, 0], lineColor: [60, 60, 60], lineWidth: 0.1, cellPadding: 3 },
+    headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
+    bodyStyles: { fillColor: [255, 255, 255] },
+    alternateRowStyles: { fillColor: [245, 247, 250] },
+
     startY: 22,
     head,
     body,

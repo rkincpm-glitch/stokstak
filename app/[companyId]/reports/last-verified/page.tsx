@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { useCompany } from "@/lib/useCompany";
 import { ArrowLeft, Download } from "lucide-react";
 import { exportToExcel, exportToPdf } from "@/lib/reportExport";
 
@@ -59,6 +60,7 @@ function Thumbnail({ src, alt }: { src: string | null | undefined; alt: string }
 export default function LastVerifiedReport() {
   const params = useParams<{ companyId: string }>();
   const companyId = params.companyId;
+  const { companyName } = useCompany();
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
@@ -185,22 +187,48 @@ export default function LastVerifiedReport() {
     setErr(null);
 
     const toDataUrl = async (url: string): Promise<string | null> => {
-      try {
-        const resp = await fetch(url);
-        if (!resp.ok) return null;
-        const blob = await resp.blob();
-        return await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = () => reject(new Error("Failed to read image"));
-          reader.readAsDataURL(blob);
-        });
-      } catch {
-        return null;
-      }
-    };
+  try {
+    const resp = await fetch(url, { cache: "force-cache" });
+    if (!resp.ok) return null;
+    const blob = await resp.blob();
 
-    const enriched = await Promise.all(
+    // Normalize orientation by letting the browser decode EXIF and then re-encoding.
+    // This prevents rotated photos in exported PDFs.
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.src = objectUrl;
+      // decode() is supported in modern browsers; falls back to load event.
+      if ("decode" in img) {
+        // @ts-expect-error - decode exists on HTMLImageElement in modern browsers
+        await img.decode();
+      } else {
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error("Failed to load image"));
+        });
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth || img.width;
+      canvas.height = img.naturalHeight || img.height;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(img, 0, 0);
+
+      // Use JPEG to keep size reasonable.
+      return canvas.toDataURL("image/jpeg", 0.92);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  } catch {
+    return null;
+  }
+};
+
+const enriched = await Promise.all(
       rows.map(async (r) => {
         const dataUrl = r.image_url ? await toDataUrl(r.image_url) : null;
         return {
@@ -218,7 +246,7 @@ export default function LastVerifiedReport() {
       { header: "Last verified", value: (r) => r.last_verified ?? "" },
       { header: "Qty", value: (r) => r.last_verified_qty ?? "" },
       { header: "Verified by", value: (r) => r.verified_by ?? "" },
-    ]);
+    ], { companyName: companyName ?? undefined });
 
     setExportingPdf(false);
   };

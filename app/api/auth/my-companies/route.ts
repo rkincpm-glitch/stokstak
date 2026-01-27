@@ -14,9 +14,9 @@ import { createClient } from "@supabase/supabase-js";
  */
 export async function POST() {
   try {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+    const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 
     if (!url || !anon) {
       return NextResponse.json({ ok: false, error: "Missing NEXT_PUBLIC_SUPABASE_URL/ANON key." }, { status: 500 });

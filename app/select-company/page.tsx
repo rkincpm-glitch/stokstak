@@ -243,8 +243,8 @@ if (serverCompanies && serverCompanies.length > 0) {
                 }}
                 className="text-left rounded-xl border bg-white p-4 hover:shadow-sm transition-shadow"
               >
-                <div className="font-semibold text-slate-900">{c.name}</div>
-                <div className="text-xs text-slate-500 mt-1">{c.id}</div>
+                <div className="font-semibold text-slate-900">{c.name || "Company"}</div>
+                <div className="text-xs text-slate-500 mt-1">Select</div>
               </button>
             ))}
           </div>
