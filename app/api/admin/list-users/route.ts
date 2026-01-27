@@ -1,114 +1,85 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
-import { createClient } from "@supabase/supabase-js";
+import { createAuthedServerClient, getSelectedCompanyId, requireUserId } from "@/lib/serverSupabase";
 
-async function getAuthedUserId() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) return null;
-
-  const cookieStore = await cookies();
-  const supabase = createServerClient(supabaseUrl, anonKey, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll(cookiesToSet) {
-        for (const c of cookiesToSet) cookieStore.set(c);
-      },
-    },
-  });
-  const { data } = await supabase.auth.getUser();
-  return data?.user?.id || null;
-}
-
+// Lists users for the currently selected company.
+// Does NOT require Service Role; relies on RLS + "admin" membership.
 export async function POST() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  try {
+    const companyId = await getSelectedCompanyId();
+    if (!companyId) {
+      return NextResponse.json({ ok: false, error: "No company selected." }, { status: 400 });
+    }
 
-  if (!supabaseUrl || !serviceRoleKey) {
+    const requesterId = await requireUserId();
+    if (!requesterId) {
+      return NextResponse.json({ ok: false, error: "Not authenticated." }, { status: 401 });
+    }
+
+    const supabase = await createAuthedServerClient();
+
+    const { data: requesterMembership, error: rmErr } = await supabase
+      .from("company_users")
+      .select("role")
+      .eq("company_id", companyId)
+      .eq("user_id", requesterId)
+      .maybeSingle();
+
+    if (rmErr) return NextResponse.json({ ok: false, error: rmErr.message }, { status: 400 });
+    if (String((requesterMembership as any)?.role || "").toLowerCase() !== "admin") {
+      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    }
+
+    // Memberships for this company
+    const { data: memberships, error: mErr } = await supabase
+      .from("company_users")
+      .select("user_id, company_id, role")
+      .eq("company_id", companyId);
+
+    if (mErr) return NextResponse.json({ ok: false, error: mErr.message }, { status: 400 });
+
+    const userIds = Array.from(new Set((memberships || []).map((m: any) => String(m.user_id))));
+
+    // Profiles for these users (email may be null if not stored; UI should handle)
+    const { data: profiles, error: pErr } = await supabase
+      .from("profiles")
+      .select("id, display_name, role, is_active, email")
+      .in("id", userIds);
+
+    if (pErr) return NextResponse.json({ ok: false, error: pErr.message }, { status: 400 });
+
+    const profileById: Record<string, any> = {};
+    for (const pr of profiles || []) profileById[String((pr as any).id)] = pr;
+
+    const users = userIds.map((id) => {
+      const pr = profileById[id] || {};
+      const email = String((pr as any).email || "");
+      return {
+        id,
+        email,
+        display_name: String((pr as any).display_name || ""),
+        role: String((pr as any).role || "pm"),
+        is_active: (pr as any).is_active === false ? false : true,
+      };
+    });
+
+    const membershipsByUserId: Record<string, { company_id: string; role: string }[]> = {};
+    for (const m of memberships || []) {
+      const uid = String((m as any).user_id);
+      if (!membershipsByUserId[uid]) membershipsByUserId[uid] = [];
+      membershipsByUserId[uid].push({
+        company_id: String((m as any).company_id),
+        role: String((m as any).role || "member"),
+      });
+    }
+
+    // Companies list: just current company
+    const { data: companies } = await supabase.from("companies").select("id, name").eq("id", companyId);
+
+    return NextResponse.json({ ok: true, users, companies: companies || [], membershipsByUserId });
+  } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: "Supabase env vars are not configured." },
+      { ok: false, error: e?.message || "Unexpected error" },
       { status: 500 }
     );
   }
-
-  const requesterId = await getAuthedUserId();
-  if (!requesterId) {
-    return NextResponse.json({ ok: false, error: "Not authenticated." }, { status: 401 });
-  }
-
-  const admin = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false },
-  });
-
-  // Authorization: requester must have profile.role === 'admin'
-  const { data: requesterProfile } = await admin
-    .from("profiles")
-    .select("id, role")
-    .eq("id", requesterId)
-    .maybeSingle();
-
-  if (requesterProfile?.role !== "admin") {
-    return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
-  }
-
-  // List auth users (email) + profiles (group/active/display_name)
-  const { data: usersResp, error: usersErr } = await admin.auth.admin.listUsers({ perPage: 1000 });
-  if (usersErr) {
-    return NextResponse.json({ ok: false, error: usersErr.message }, { status: 500 });
-  }
-
-  const users = usersResp?.users || [];
-  const userIds = users.map((u) => u.id);
-
-  const { data: profiles } = await admin
-    .from("profiles")
-    .select("id, role, display_name, is_active, created_at")
-    .in("id", userIds);
-
-  const byId = new Map<string, any>();
-  for (const p of profiles || []) byId.set(p.id, p);
-
-  const rows = users
-    .map((u) => {
-      const p = byId.get(u.id);
-      return {
-        id: u.id,
-        email: u.email || "",
-        display_name: p?.display_name || u.email || u.id,
-        role: p?.role || "pm",
-        is_active: p?.is_active ?? true,
-        created_at: p?.created_at || u.created_at,
-      };
-    })
-    .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
-
-  // Companies + memberships (for UI assignment)
-  const { data: companies, error: compErr } = await admin
-    .from("companies")
-    .select("id, name")
-    .order("name", { ascending: true });
-
-  if (compErr) {
-    return NextResponse.json({ ok: true, users: rows, companies: [], membershipsByUserId: {} });
-  }
-
-  const { data: memberships } = await admin
-    .from("company_users")
-    .select("user_id, company_id, role")
-    .in("user_id", userIds);
-
-  const membershipsByUserId: Record<string, { company_id: string; role: string }[]> = {};
-  for (const m of memberships || []) {
-    const uid = String((m as any).user_id);
-    if (!membershipsByUserId[uid]) membershipsByUserId[uid] = [];
-    membershipsByUserId[uid].push({
-      company_id: String((m as any).company_id),
-      role: String((m as any).role || "member"),
-    });
-  }
-
-  return NextResponse.json({ ok: true, users: rows, companies: companies || [], membershipsByUserId });
 }
