@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { User, Tags, MapPin, Shapes, Users, Building2 } from "lucide-react";
+import { User, Tags, MapPin, Shapes, Users } from "lucide-react";
 import { useCompany } from "@/lib/useCompany";
 
 function Card({ title, desc, href, icon: Icon }: any) {
@@ -37,19 +37,22 @@ export default function CompanySettingsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card
-          title="Company profile"
-          desc="Official company name and branding."
-          href={`/${companyId}/settings/company`}
-          icon={Building2}
+          title="User settings"
+          desc="Profile and access controls."
+          href={canAdminUsers ? `/${companyId}/admin/users` : `/admin/users`}
+          icon={User}
         />
 
+        {canAdminUsers && (
+          <Card
+            title="Manage users"
+            desc="Invite and manage company members."
+            href={`/${companyId}/admin/users`}
+            icon={Users}
+          />
+        )}
+
         <Card
-          title="Users"
-          desc="Invite and manage members and access."
-          href={`/${companyId}/settings/users`}
-          icon={Users}
-        />
-<Card
           title="Categories"
           desc="Create, edit, and deactivate categories."
           href={`/${companyId}/settings/categories`}

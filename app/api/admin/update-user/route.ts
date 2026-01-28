@@ -1,63 +1,97 @@
-import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { createAuthedServerClient, getSelectedCompanyId, requireUserId } from "@/lib/serverSupabase";
-import { requireSameOrigin, rateLimit } from "@/lib/security";
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 
-const BodySchema = z.object({
-  id: z.string().uuid(),
-  role: z.string().min(1).max(32),
-  display_name: z.string().nullable().optional(),
-  is_active: z.boolean().nullable().optional(),
-});
+async function getAuthedUserId(): Promise<string | null> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) return null;
 
-function getClientIp(req: NextRequest) {
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
-  const xr = req.headers.get("x-real-ip");
-  if (xr) return xr.trim();
-  return "unknown";
+  const cookieStore = await cookies();
+  const supabase = createServerClient(supabaseUrl, anonKey, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
+      },
+      setAll(cookiesToSet) {
+        for (const c of cookiesToSet) cookieStore.set(c);
+      },
+    },
+  });
+
+  const { data } = await supabase.auth.getUser();
+  return data?.user?.id || null;
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    requireSameOrigin(req);
-    const rl = rateLimit(`update-user:${getClientIp(req)}`, { capacity: 30, refillPerSecond: 1 });
-    if (!rl.ok) return NextResponse.json({ ok: false, error: "Too many requests" }, { status: 429 });
+export async function POST(req: Request) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
-    if (!parsed.success) return NextResponse.json({ ok: false, error: "Invalid payload" }, { status: 400 });
-
-    const companyId = await getSelectedCompanyId();
-    if (!companyId) return NextResponse.json({ ok: false, error: "No company selected." }, { status: 400 });
-
-    const requesterId = await requireUserId();
-    if (!requesterId) return NextResponse.json({ ok: false, error: "Not authenticated." }, { status: 401 });
-
-    const supabase = await createAuthedServerClient();
-
-    const { data: requesterMembership, error: rmErr } = await supabase
-      .from("company_users")
-      .select("role")
-      .eq("company_id", companyId)
-      .eq("user_id", requesterId)
-      .maybeSingle();
-
-    if (rmErr) return NextResponse.json({ ok: false, error: rmErr.message }, { status: 400 });
-    if (String((requesterMembership as any)?.role || "").toLowerCase() !== "admin") {
-      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
-    }
-
-    const { id, role, display_name = null, is_active = null } = parsed.data;
-
-    const patch: any = { id, role };
-    if (display_name !== null) patch.display_name = display_name;
-    if (is_active !== null) patch.is_active = is_active;
-
-    const { error: upErr } = await supabase.from("profiles").upsert(patch, { onConflict: "id" });
-    if (upErr) return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 });
-
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "Unexpected error" }, { status: 500 });
+  if (!supabaseUrl || !serviceRoleKey) {
+    return NextResponse.json(
+      { ok: false, error: "Supabase env vars are not configured." },
+      { status: 500 }
+    );
   }
+
+  const requesterId = await getAuthedUserId();
+  if (!requesterId) {
+    return NextResponse.json(
+      { ok: false, error: "Not authenticated." },
+      { status: 401 }
+    );
+  }
+
+  const admin = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false },
+  });
+
+  const { data: requesterProfile } = await admin
+    .from("profiles")
+    .select("id, role")
+    .eq("id", requesterId)
+    .maybeSingle();
+
+  if (requesterProfile?.role !== "admin") {
+    return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const userId = String(body.userId || "").trim();
+  const role = String(body.role || "").trim();
+  const display_name =
+    body.display_name === null || body.display_name === undefined
+      ? null
+      : String(body.display_name);
+  const is_active = typeof body.is_active === "boolean" ? body.is_active : null;
+
+  if (!userId) {
+    return NextResponse.json({ ok: false, error: "Missing userId" }, { status: 400 });
+  }
+  if (!role) {
+    return NextResponse.json({ ok: false, error: "Missing role" }, { status: 400 });
+  }
+
+  // Prevent admin from disabling their own account
+  if (userId === requesterId && is_active === false) {
+    return NextResponse.json(
+      { ok: false, error: "You cannot disable your own admin account." },
+      { status: 400 }
+    );
+  }
+
+  const patch: any = { id: userId, role };
+  if (display_name !== null) patch.display_name = display_name;
+  if (is_active !== null) patch.is_active = is_active;
+
+  const { error: upErr } = await admin
+    .from("profiles")
+    .upsert(patch, { onConflict: "id" });
+
+  if (upErr) {
+    return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
 }

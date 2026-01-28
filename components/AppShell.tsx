@@ -12,13 +12,11 @@ function cx(...parts: Array<string | false | null | undefined>) {
 
 export default function AppShell({
   companyId,
-  companyName,
   role,
   headerRight,
   children,
 }: {
   companyId: string;
-  companyName?: string | null;
   role: AppRole | null;
   headerRight?: ReactNode;
   children: ReactNode;
@@ -57,7 +55,7 @@ export default function AppShell({
             </button>
 
             <div className="ml-3 text-sm text-slate-600 truncate">
-              Company: <span className="font-medium text-slate-900">{companyName || companyId}</span>
+              Company: <span className="font-medium text-slate-900">{companyId}</span>
             </div>
 
             <div className="ml-auto flex items-center gap-2">
