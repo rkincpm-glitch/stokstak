@@ -6,6 +6,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 type UseCompanyResult = {
   loading: boolean;
   companyId: string | null;
+  companyName: string | null;
   role: string | null;
   error: string | null;
 };
@@ -19,6 +20,7 @@ function getCookie(name: string) {
 export function useCompany(): UseCompanyResult {
   const [loading, setLoading] = useState(true);
   const [companyId, setCompanyId] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,6 +38,7 @@ export function useCompany(): UseCompanyResult {
         if (!cancelled) {
           setError(authErr.message);
           setCompanyId(null);
+          setCompanyName(null);
           setRole(null);
           setLoading(false);
         }
@@ -46,6 +49,7 @@ export function useCompany(): UseCompanyResult {
       if (!user) {
         if (!cancelled) {
           setCompanyId(null);
+          setCompanyName(null);
           setRole(null);
           setLoading(false);
         }
@@ -56,6 +60,7 @@ export function useCompany(): UseCompanyResult {
       if (!activeCompanyId) {
         if (!cancelled) {
           setCompanyId(null);
+          setCompanyName(null);
           setRole(null);
           setLoading(false);
         }
@@ -73,6 +78,7 @@ export function useCompany(): UseCompanyResult {
         if (!cancelled) {
           setError("Failed to load company membership.");
           setCompanyId(null);
+          setCompanyName(null);
           setRole(null);
           setLoading(false);
         }
@@ -82,6 +88,7 @@ export function useCompany(): UseCompanyResult {
       if (!data?.company_id) {
         if (!cancelled) {
           setCompanyId(null);
+          setCompanyName(null);
           setRole(null);
           setLoading(false);
         }
@@ -89,10 +96,27 @@ export function useCompany(): UseCompanyResult {
       }
 
       if (!cancelled) {
-        setCompanyId(String(data.company_id));
-        setRole((data as any).role ?? null);
-        setLoading(false);
-      }
+  setCompanyId(String(data.company_id));
+  setRole((data as any).role ?? null);
+
+  // Resolve company display name via server endpoint (bypasses RLS and avoids UUIDs in UI).
+  try {
+    const resp = await fetch("/api/auth/my-companies", { method: "POST" });
+    if (resp.ok) {
+      const payload = await resp.json();
+      const list: any[] = payload?.companies || payload || [];
+      const found = list.find((c) => String(c?.id) === String(activeCompanyId));
+      setCompanyName(found?.name ? String(found.name) : null);
+    } else {
+      setCompanyName(null);
+    }
+  } catch {
+    setCompanyName(null);
+  }
+
+  setLoading(false);
+}
+
     };
 
     void run();
@@ -101,5 +125,5 @@ export function useCompany(): UseCompanyResult {
     };
   }, []);
 
-  return { loading, companyId, role, error };
+  return { loading, companyId, companyName, role, error };
 }
