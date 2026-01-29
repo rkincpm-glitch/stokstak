@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
+import { cacheGet, cacheSet } from "@/lib/clientCache";
 import { Plus, Search } from "lucide-react";
 
 type Vendor = {
@@ -30,6 +32,10 @@ export default function VendorsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [q, setQ] = useState("");
+  const qDebounced = useDebouncedValue(q, 250);
+
+  const PAGE_SIZE = 25;
+  const [page, setPage] = useState(1);
   const moneyFmt = useMemo(
     () => new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
     []
@@ -48,82 +54,111 @@ export default function VendorsPage() {
     setLoading(true);
     setErr(null);
 
+    // reset pagination when the query changes
+    // (handled here to keep it in the same state transition)
+
     const { data: userData } = await supabase.auth.getUser();
     if (!userData?.user) {
       router.replace("/auth");
       return;
     }
 
-    const { data, error } = await supabase
+    const cacheKey = `vendors:list:${companyId}:${qDebounced}:${page}`;
+    const cached = cacheGet<Vendor[]>(cacheKey);
+    if (cached) {
+      setVendors(cached);
+      setLoading(false);
+      // Still refresh outstanding in the background (cheap perceived speed win)
+      void refreshOutstanding(cached.map((v) => v.id));
+      return;
+    }
+
+    const fromIdx = (page - 1) * PAGE_SIZE;
+    const toIdx = fromIdx + PAGE_SIZE - 1;
+
+    let query = supabase
       .from("vendors")
       .select("id, name, contact_name, phone, email, is_active, created_at")
       .eq("company_id", companyId)
-      .order("name", { ascending: true });
+      .order("name", { ascending: true })
+      .range(fromIdx, toIdx);
+
+    if (qDebounced.trim()) {
+      query = query.ilike("name", `%${qDebounced.trim()}%`);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       setErr(error.message);
       setVendors([]);
     } else {
       const base = (data || []) as Vendor[];
-
-      // Compute outstanding balance per vendor (invoice-allocated).
-      // Outstanding = sum(invoices.amount) - sum(payments.amount where payments.invoice_id is set)
-      const [{ data: invRows, error: invErr }, { data: payRows, error: payErr }] = await Promise.all([
-        supabase
-          .from("vendor_invoices")
-          .select("vendor_id, amount")
-          .eq("company_id", companyId),
-        supabase
-          .from("vendor_payments")
-          .select("vendor_id, amount, invoice_id")
-          .eq("company_id", companyId)
-          .not("invoice_id", "is", null),
-      ]);
-
-      if (invErr || payErr) {
-        // Do not block page load if aggregates fail.
-        if (invErr) setErr(invErr.message);
-        else if (payErr) setErr(payErr.message);
-        setVendors(base);
-        setLoading(false);
-        return;
-      }
-
-      const invByVendor = new Map<string, number>();
-      for (const r of (invRows || []) as Array<{ vendor_id: string; amount: number | null }>) {
-        const key = String(r.vendor_id);
-        const amt = Number(r.amount || 0);
-        invByVendor.set(key, (invByVendor.get(key) || 0) + amt);
-      }
-
-      const payByVendor = new Map<string, number>();
-      for (const r of (payRows || []) as Array<{ vendor_id: string; amount: number | null; invoice_id: string | null }>) {
-        const key = String(r.vendor_id);
-        const amt = Number(r.amount || 0);
-        payByVendor.set(key, (payByVendor.get(key) || 0) + amt);
-      }
-
-      const withOutstanding = base.map((v) => {
-        const invoices = invByVendor.get(v.id) || 0;
-        const allocatedPayments = payByVendor.get(v.id) || 0;
-        return { ...v, outstanding: invoices - allocatedPayments };
-      });
-
-      setVendors(withOutstanding);
+      // Show the list immediately; compute outstanding asynchronously.
+      setVendors(base);
+      cacheSet(cacheKey, base, 30_000);
+      void refreshOutstanding(base.map((v) => v.id));
     }
     setLoading(false);
+  };
+
+  const refreshOutstanding = async (vendorIds: string[]) => {
+    if (!vendorIds.length) return;
+
+    const aggKey = `vendors:outstanding:${companyId}:${vendorIds.join(",")}`;
+    const cached = cacheGet<Record<string, number>>(aggKey);
+    if (cached) {
+      setVendors((prev) => prev.map((v) => ({ ...v, outstanding: cached[v.id] ?? v.outstanding })));
+      return;
+    }
+
+    const [{ data: invRows }, { data: payRows }] = await Promise.all([
+      supabase
+        .from("vendor_invoices")
+        .select("vendor_id, amount")
+        .eq("company_id", companyId)
+        .in("vendor_id", vendorIds),
+      supabase
+        .from("vendor_payments")
+        .select("vendor_id, amount, invoice_id")
+        .eq("company_id", companyId)
+        .in("vendor_id", vendorIds)
+        .not("invoice_id", "is", null),
+    ]);
+
+    const invByVendor = new Map<string, number>();
+    for (const r of (invRows || []) as Array<{ vendor_id: string; amount: number | null }>) {
+      const key = String(r.vendor_id);
+      invByVendor.set(key, (invByVendor.get(key) || 0) + Number(r.amount || 0));
+    }
+    const payByVendor = new Map<string, number>();
+    for (const r of (payRows || []) as Array<{ vendor_id: string; amount: number | null }>) {
+      const key = String(r.vendor_id);
+      payByVendor.set(key, (payByVendor.get(key) || 0) + Number(r.amount || 0));
+    }
+
+    const out: Record<string, number> = {};
+    for (const vid of vendorIds) {
+      out[vid] = (invByVendor.get(vid) || 0) - (payByVendor.get(vid) || 0);
+    }
+    cacheSet(aggKey, out, 30_000);
+    setVendors((prev) => prev.map((v) => ({ ...v, outstanding: out[v.id] ?? v.outstanding })));
   };
 
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId]);
+  }, [companyId, qDebounced, page]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [qDebounced]);
 
   const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
+    const s = qDebounced.trim().toLowerCase();
     if (!s) return vendors;
     return vendors.filter((v) => (`${v.name} ${v.contact_name ?? ""} ${v.email ?? ""}`.toLowerCase().includes(s)));
-  }, [vendors, q]);
+  }, [vendors, qDebounced]);
 
   const totalOutstandingAllVendors = useMemo(() => {
     // Super Vendors are managed as a separate module/table, so the Vendors list
@@ -246,6 +281,26 @@ export default function VendorsPage() {
               ))}
             </tbody>
           </table>
+
+          <div className="flex items-center justify-between gap-3 p-3 border-t text-sm">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="px-3 py-1.5 rounded-lg border bg-white disabled:opacity-50"
+            >
+              Prev
+            </button>
+            <div className="text-xs text-slate-500">Page {page}</div>
+            <button
+              type="button"
+              onClick={() => setPage((p) => p + 1)}
+              disabled={filtered.length < PAGE_SIZE}
+              className="px-3 py-1.5 rounded-lg border bg-white disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
         </div>
       )}
 

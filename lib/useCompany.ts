@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { cacheGet, cacheSet } from "@/lib/clientCache";
 
 type UseCompanyResult = {
   loading: boolean;
@@ -96,26 +97,35 @@ export function useCompany(): UseCompanyResult {
       }
 
       if (!cancelled) {
-  setCompanyId(String(data.company_id));
-  setRole((data as any).role ?? null);
+        setCompanyId(String(data.company_id));
+        setRole((data as any).role ?? null);
 
-  // Resolve company display name via server endpoint (bypasses RLS and avoids UUIDs in UI).
-  try {
-    const resp = await fetch("/api/auth/my-companies", { method: "POST" });
-    if (resp.ok) {
-      const payload = await resp.json();
-      const list: any[] = payload?.companies || payload || [];
-      const found = list.find((c) => String(c?.id) === String(activeCompanyId));
-      setCompanyName(found?.name ? String(found.name) : null);
-    } else {
-      setCompanyName(null);
-    }
-  } catch {
-    setCompanyName(null);
-  }
+        // Resolve company display name via server endpoint (bypasses RLS and avoids UUIDs in UI).
+        // Cached to avoid repeated calls on every navigation.
+        const cacheKey = `my-companies:${user.id}`;
+        const cached = cacheGet<any[]>(cacheKey);
+        if (cached) {
+          const found = cached.find((c) => String(c?.id) === String(activeCompanyId));
+          setCompanyName(found?.name ? String(found.name) : null);
+        } else {
+          try {
+            const resp = await fetch("/api/auth/my-companies", { method: "POST" });
+            if (resp.ok) {
+              const payload = await resp.json();
+              const list: any[] = payload?.companies || payload || [];
+              cacheSet(cacheKey, list, 5 * 60_000);
+              const found = list.find((c) => String(c?.id) === String(activeCompanyId));
+              setCompanyName(found?.name ? String(found.name) : null);
+            } else {
+              setCompanyName(null);
+            }
+          } catch {
+            setCompanyName(null);
+          }
+        }
 
-  setLoading(false);
-}
+        setLoading(false);
+      }
 
     };
 

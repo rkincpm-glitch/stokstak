@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
+import { cacheGet, cacheSet } from "@/lib/clientCache";
 import { Plus, Search, X, ClipboardCheck, Settings2, Pencil } from "lucide-react";
 
 type Item = {
@@ -44,6 +45,9 @@ export default function ItemsPage() {
   const [q, setQ] = useState("");
   const qDebounced = useDebouncedValue(q, 250);
 
+  const PAGE_SIZE = 25;
+  const [page, setPage] = useState(1);
+
   const [active, setActive] = useState<Item | null>(null);
   const [verifications, setVerifications] = useState<Verification[]>([]);
   const [verLoading, setVerLoading] = useState(false);
@@ -55,6 +59,10 @@ export default function ItemsPage() {
 
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 
+  useEffect(() => {
+    setPage(1);
+  }, [qDebounced]);
+
   const loadItems = async () => {
     setLoading(true);
     setError(null);
@@ -65,17 +73,38 @@ export default function ItemsPage() {
       return;
     }
 
-    const { data, error } = await supabase
+    const cacheKey = `items:list:${companyId}:${qDebounced}:${page}`;
+    const cached = cacheGet<Item[]>(cacheKey);
+    if (cached) {
+      setItems(cached);
+      setLoading(false);
+      return;
+    }
+
+    const fromIdx = (page - 1) * PAGE_SIZE;
+    const toIdx = fromIdx + PAGE_SIZE - 1;
+
+    let query = supabase
       .from("items")
       .select("id, name, description, category, location, quantity, te_number, type, image_url, created_at")
       .eq("company_id", companyId)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(fromIdx, toIdx);
+
+    if (qDebounced.trim()) {
+      // Search by name (fast). Client-side filtering can still refine further if needed.
+      query = query.ilike("name", `%${qDebounced.trim()}%`);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       setError(error.message);
       setItems([]);
     } else {
-      setItems((data || []) as Item[]);
+      const list = (data || []) as Item[];
+      setItems(list);
+      cacheSet(cacheKey, list, 30_000);
     }
 
     setLoading(false);
@@ -84,7 +113,7 @@ export default function ItemsPage() {
   useEffect(() => {
     void loadItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId]);
+  }, [companyId, qDebounced, page]);
 
   // Realtime: reflect inventory changes across users
   useEffect(() => {
@@ -255,6 +284,26 @@ export default function ItemsPage() {
             </div>
           </button>
         ))}
+      </div>
+
+      <div className="flex items-center justify-between gap-3 text-sm text-slate-600">
+        <button
+          type="button"
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+          disabled={page === 1 || loading}
+          className="px-3 py-2 rounded-lg border bg-white disabled:opacity-50"
+        >
+          Prev
+        </button>
+        <div className="text-xs text-slate-500">Page {page}</div>
+        <button
+          type="button"
+          onClick={() => setPage((p) => p + 1)}
+          disabled={filtered.length < PAGE_SIZE || loading}
+          className="px-3 py-2 rounded-lg border bg-white disabled:opacity-50"
+        >
+          Next
+        </button>
       </div>
 
       {/* Modal */}

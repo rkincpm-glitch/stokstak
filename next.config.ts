@@ -1,6 +1,15 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Reduce client bundle size for icon imports
+  experimental: {
+    optimizePackageImports: ["lucide-react"],
+  },
+  // Remove console.* in production builds (keeps errors/warns by default)
+  compiler: {
+    removeConsole:
+      process.env.NODE_ENV === "production" ? { exclude: ["error", "warn"] } : false,
+  },
   images: {
     remotePatterns: [
       {
