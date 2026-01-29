@@ -30,6 +30,12 @@ export default function VendorsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [q, setQ] = useState("");
+  const moneyFmt = useMemo(
+    () => new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    []
+  );
+  const fmtMoney = (v: any) => moneyFmt.format(Number(v || 0));
+
 
   // create vendor
   const [showNew, setShowNew] = useState(false);
@@ -199,7 +205,7 @@ export default function VendorsPage() {
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
           <div>{filtered.length} vendor(s)</div>
           <div className="font-medium text-slate-700">
-            Total outstanding (all vendors): ${totalOutstandingAllVendors.toFixed(2)}
+            Total outstanding (all vendors): ${fmtMoney(totalOutstandingAllVendors)}
           </div>
         </div>
       </div>

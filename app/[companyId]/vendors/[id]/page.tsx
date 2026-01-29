@@ -131,7 +131,6 @@ const [showStatement, setShowStatement] = useState(false);
 
   // Hover preview overlay (full-screen) for attachments
   const [activePreview, setActivePreview] = useState<null | { path: string; url: string; kind: "image" | "pdf" }>(null);
-  const closePreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [contentTypeByPath, setContentTypeByPath] = useState<Record<string, string>>({});
 
@@ -196,55 +195,16 @@ const [showStatement, setShowStatement] = useState(false);
     return signed;
   };
 
+  // Attachment preview (opens on click)
+  const openPreviewForPath = async (attachmentPath: string) => {
+    const url = await getAttachmentUrl(attachmentPath);
+    if (!url) return;
 
-const hoveringTriggerRef = useRef(false);
-  const hoveringOverlayRef = useRef(false);
-
-  const clearClosePreviewTimer = () => {
-    if (closePreviewTimerRef.current) {
-      clearTimeout(closePreviewTimerRef.current);
-      closePreviewTimerRef.current = null;
-    }
+    const kind: "image" | "pdf" = isLikelyPdf(attachmentPath) ? "pdf" : "image";
+    setActivePreview({ path: attachmentPath, url, kind });
   };
 
-  const scheduleClosePreview = () => {
-    clearClosePreviewTimer();
-    closePreviewTimerRef.current = setTimeout(() => {
-      if (!hoveringTriggerRef.current && !hoveringOverlayRef.current) {
-        setActivePreview(null);
-      }
-    }, 120);
-  };
-
-  const onAttachmentTriggerEnter = (attachmentPath: string) => {
-    hoveringTriggerRef.current = true;
-    clearClosePreviewTimer();
-    void showPreviewForPath(attachmentPath);
-  };
-
-  const onAttachmentTriggerLeave = () => {
-    hoveringTriggerRef.current = false;
-    scheduleClosePreview();
-  };
-
-  const onPreviewOverlayEnter = () => {
-    hoveringOverlayRef.current = true;
-    clearClosePreviewTimer();
-  };
-
-  const onPreviewOverlayLeave = () => {
-    hoveringOverlayRef.current = false;
-    scheduleClosePreview();
-  };
-
-  const showPreviewForPath = async (attachmentPath: string) => {
-  clearClosePreviewTimer();
-  const url = await getAttachmentUrl(attachmentPath);
-  if (!url) return;
-
-  const kind: "image" | "pdf" = isLikelyPdf(attachmentPath) ? "pdf" : "image";
-  setActivePreview({ path: attachmentPath, url, kind });
-};
+  const closePreview = () => setActivePreview(null);
   const uploadAttachment = async (folder: "invoices" | "payments", file: File): Promise<string> => {
     const ext = file.name.includes(".") ? file.name.split(".").pop() : "";
     const base = file.name.replace(/\.[^/.]+$/, "");
@@ -294,23 +254,12 @@ useEffect(() => {
   if (!activePreview) return;
 
   const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") setActivePreview(null);
+    if (e.key === "Escape") closePreview();
   };
 
   window.addEventListener("keydown", onKeyDown);
   return () => window.removeEventListener("keydown", onKeyDown);
-}, [activePreview]);
-
-  const openAttachment = async (storagePathOrUrl: string | null | undefined) => {
-    if (!storagePathOrUrl) return;
-    try {
-      const url = await getAttachmentUrl(storagePathOrUrl);
-      if (!url) return;
-      window.open(url, "_blank", "noopener,noreferrer");
-    } catch (e: any) {
-      setErr(e?.message || "Failed to open attachment");
-    }
-  };
+}, [activePreview]); 
 
   const load = async () => {
     setLoading(true);
@@ -478,6 +427,13 @@ useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, vendorId]);
+
+
+  const moneyFmt = useMemo(
+    () => new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    []
+  );
+  const fmtMoney = (v: any) => moneyFmt.format(Number(v || 0));
 
   const totalInvoiced = useMemo(() => invoices.reduce((s, i) => s + Number(i.amount || 0), 0), [invoices]);
   const totalPaid = useMemo(() => payments.reduce((s, p) => s + Number(p.amount || 0), 0), [payments]);
@@ -846,15 +802,15 @@ useEffect(() => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="rounded-2xl border bg-white p-4">
           <div className="text-xs text-slate-500">Total invoiced</div>
-          <div className="text-xl font-semibold text-slate-900 mt-1">{totalInvoiced.toFixed(2)}</div>
+          <div className="text-xl font-semibold text-slate-900 mt-1">{fmtMoney(totalInvoiced)}</div>
         </div>
         <div className="rounded-2xl border bg-white p-4">
           <div className="text-xs text-slate-500">Total paid</div>
-          <div className="text-xl font-semibold text-slate-900 mt-1">{totalPaid.toFixed(2)}</div>
+          <div className="text-xl font-semibold text-slate-900 mt-1">{fmtMoney(totalPaid)}</div>
         </div>
         <div className="rounded-2xl border bg-white p-4">
           <div className="text-xs text-slate-500">Balance</div>
-          <div className="text-xl font-semibold text-slate-900 mt-1">{balance.toFixed(2)}</div>
+          <div className="text-xl font-semibold text-slate-900 mt-1">{fmtMoney(balance)}</div>
         </div>
       </div>
 
@@ -916,18 +872,14 @@ useEffect(() => {
                   <td className="px-4 py-3">{superVendors.find((sv) => sv.id === i.super_vendor_id)?.name || (i.super_vendor_id ? "(Unknown)" : "—")}</td>
                   <td className="px-4 py-3">{i.invoice_date || "—"}</td>
                   <td className="px-4 py-3">{i.due_date || "—"}</td>
-                  <td className="px-4 py-3 text-right">{Number(i.amount).toFixed(2)}</td>
+                  <td className="px-4 py-3 text-right">{fmtMoney(i.amount)}</td>
                   <td className="px-4 py-3">{i.status}</td>
                   <td className="px-4 py-3">
                     {i.attachment_path ? (
                       <div className="relative inline-flex items-center gap-2">
                         <button
                           type="button"
-                          onMouseEnter={() => i.attachment_path && onAttachmentTriggerEnter(i.attachment_path)}
-                          onMouseLeave={onAttachmentTriggerLeave}
-                          onFocus={() => i.attachment_path && onAttachmentTriggerEnter(i.attachment_path)}
-                          onBlur={onAttachmentTriggerLeave}
-                          onClick={() => openAttachment(i.attachment_path)}
+                          onClick={() => i.attachment_path && void openPreviewForPath(i.attachment_path)}
                           className="inline-flex items-center gap-2 text-slate-900 underline underline-offset-4"
                         >
                           <Paperclip className="h-4 w-4" />
@@ -1011,7 +963,7 @@ useEffect(() => {
                 <tr key={p.id} className="border-t">
                   <td className="px-4 py-3">{p.payment_date || "—"}</td>
                   <td className="px-4 py-3">{p.invoice_number || "—"}</td>
-                  <td className="px-4 py-3 text-right">{Number(p.amount).toFixed(2)}</td>
+                  <td className="px-4 py-3 text-right">{fmtMoney(p.amount)}</td>
                   <td className="px-4 py-3">{p.method || "—"}</td>
                   <td className="px-4 py-3">{p.reference || "—"}</td>
                   <td className="px-4 py-3">
@@ -1019,11 +971,7 @@ useEffect(() => {
                       <div className="relative inline-block">
                         <button
                           type="button"
-                          onMouseEnter={() => p.attachment_path && onAttachmentTriggerEnter(p.attachment_path)}
-                          onMouseLeave={onAttachmentTriggerLeave}
-                          onFocus={() => p.attachment_path && onAttachmentTriggerEnter(p.attachment_path)}
-                          onBlur={onAttachmentTriggerLeave}
-                          onClick={() => openAttachment(p.attachment_path)}
+                          onClick={() => p.attachment_path && void openPreviewForPath(p.attachment_path)}
                           className="inline-flex items-center gap-2 text-sm text-blue-700 hover:text-blue-900"
                         >
                           <Paperclip size={16} />
@@ -1376,7 +1324,7 @@ useEffect(() => {
                   <option value="">Unallocated</option>
                   {invoices.map((i) => (
                     <option key={i.id} value={i.id}>
-                      {i.invoice_number} ({Number(i.amount).toFixed(2)})
+                      {i.invoice_number} ({fmtMoney(i.amount)})
                     </option>
                   ))}
                 </select>
@@ -1474,7 +1422,7 @@ useEffect(() => {
                   <option value="">Unallocated</option>
                   {invoices.map((i) => (
                     <option key={i.id} value={i.id}>
-                      {i.invoice_number} ({Number(i.amount).toFixed(2)})
+                      {i.invoice_number} ({fmtMoney(i.amount)})
                     </option>
                   ))}
                 </select>
@@ -1594,9 +1542,9 @@ useEffect(() => {
                       Type: r.type,
                       Reference: r.reference,
                       Invoice: r.invoice_number,
-                      Debit: r.debit,
-                      Credit: r.credit,
-                      Balance: r.balance,
+                      Debit: r.debit ? fmtMoney(r.debit) : "",
+                      Credit: r.credit ? fmtMoney(r.credit) : "",
+                      Balance: fmtMoney(r.balance),
                     }));
 
                     const cols = [
@@ -1626,9 +1574,9 @@ useEffect(() => {
                       Type: r.type,
                       Reference: r.reference,
                       Invoice: r.invoice_number,
-                      Debit: r.debit,
-                      Credit: r.credit,
-                      Balance: r.balance,
+                      Debit: r.debit ? fmtMoney(r.debit) : "",
+                      Credit: r.credit ? fmtMoney(r.credit) : "",
+                      Balance: fmtMoney(r.balance),
                     }));
 
                     const cols = [
@@ -1677,9 +1625,9 @@ useEffect(() => {
                         <td className="px-4 py-3">{r.type}</td>
                         <td className="px-4 py-3">{r.invoice_number}</td>
                         <td className="px-4 py-3">{r.reference}</td>
-                        <td className="px-4 py-3 text-right">{r.debit ? r.debit.toFixed(2) : "—"}</td>
-                        <td className="px-4 py-3 text-right">{r.credit ? r.credit.toFixed(2) : "—"}</td>
-                        <td className="px-4 py-3 text-right font-medium">{r.balance.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-right">{r.debit ? fmtMoney(r.debit) : "—"}</td>
+                        <td className="px-4 py-3 text-right">{r.credit ? fmtMoney(r.credit) : "—"}</td>
+                        <td className="px-4 py-3 text-right font-medium">{fmtMoney(r.balance)}</td>
                       </tr>
                     ))
                   )}
@@ -1713,7 +1661,17 @@ useEffect(() => {
         className="max-h-[92vh] max-w-[96vw] w-full h-full p-4 flex items-center justify-center"
         onClick={(e) => e.stopPropagation()}
       >
-        {activePreview.kind === "pdf" ? (
+        
+          <button
+            type="button"
+            onClick={closePreview}
+            className="absolute right-3 top-3 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-slate-900 shadow hover:bg-white"
+            aria-label="Close preview"
+            title="Close"
+          >
+            ×
+          </button>
+{activePreview.kind === "pdf" ? (
           <iframe
             src={`${activePreview.url}#toolbar=0&navpanes=0&scrollbar=1`}
             className="h-full w-full rounded-xl bg-white"
